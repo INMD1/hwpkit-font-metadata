@@ -1,0 +1,390 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hwpkit.dev/schema/font-comparison.schema.json",
+  "title": "Hwpkit font comparison result",
+  "description": "hwpkit-font-meta compare 명령의 대체 폰트 순위와 HWP/HWPX 보정 제안입니다.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "schemaId",
+    "source",
+    "config",
+    "candidates",
+    "rejected"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri-reference"
+    },
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "schemaId": {
+      "const": "hwpkit.font-comparison/v1"
+    },
+    "source": {
+      "$ref": "#/$defs/profileRef"
+    },
+    "config": {
+      "$ref": "#/$defs/config"
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "allOf": [
+          { "$ref": "#/$defs/candidate" },
+          {
+            "properties": {
+              "eligible": { "const": true },
+              "rank": { "type": "integer", "minimum": 1 },
+              "distance": { "type": "number", "minimum": 0 }
+            }
+          }
+        ]
+      }
+    },
+    "rejected": {
+      "type": "array",
+      "items": {
+        "allOf": [
+          { "$ref": "#/$defs/candidate" },
+          {
+            "properties": {
+              "eligible": { "const": false },
+              "rank": { "type": "null" },
+              "distance": { "type": "null" },
+              "score": { "const": 0 }
+            }
+          }
+        ]
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/inputError" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "profileId": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}#face=[0-9]+(?:@[A-Za-z0-9 ]{4}=[^,@]+(?:,[A-Za-z0-9 ]{4}=[^,@]+)*)?$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "faceRef": {
+      "type": "object",
+      "properties": {
+        "family": { "type": ["string", "null"] },
+        "subfamily": { "type": ["string", "null"] },
+        "fullName": { "type": ["string", "null"] },
+        "postscriptName": { "type": ["string", "null"] },
+        "weightClass": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "widthClass": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 9
+        },
+        "italic": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "profileRef": {
+      "type": "object",
+      "required": ["profileId", "face"],
+      "properties": {
+        "profileId": { "$ref": "#/$defs/profileId" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "faceIndex": { "type": "integer", "minimum": 0 },
+        "face": { "$ref": "#/$defs/faceRef" }
+      },
+      "additionalProperties": false
+    },
+    "nonNegativeWeights": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0
+      }
+    },
+    "componentWeights": {
+      "type": "object",
+      "required": ["width", "space", "vertical", "style"],
+      "properties": {
+        "width": { "type": "number", "minimum": 0 },
+        "space": { "type": "number", "minimum": 0 },
+        "vertical": { "type": "number", "minimum": 0 },
+        "style": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "limitPair": {
+      "type": "array",
+      "prefixItems": [
+        { "type": "number" },
+        { "type": "number" }
+      ],
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "formatLimits": {
+      "type": "object",
+      "required": ["ratio", "spacing"],
+      "properties": {
+        "ratio": { "$ref": "#/$defs/limitPair" },
+        "spacing": { "$ref": "#/$defs/limitPair" }
+      },
+      "additionalProperties": false
+    },
+    "config": {
+      "type": "object",
+      "required": [
+        "requiredCoverageSets",
+        "coverageTolerance",
+        "minimumCoverageRatio",
+        "missingMetricPenalty",
+        "spaceFrequency",
+        "weights",
+        "adjustmentLimits"
+      ],
+      "properties": {
+        "requiredCoverageSets": {
+          "type": ["array", "null"],
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "coverageTolerance": { "type": "number", "minimum": 0 },
+        "minimumCoverageRatio": {
+          "oneOf": [
+            { "$ref": "#/$defs/ratio" },
+            { "type": "null" }
+          ]
+        },
+        "missingMetricPenalty": { "type": "number", "minimum": 0 },
+        "spaceFrequency": { "$ref": "#/$defs/ratio" },
+        "weights": {
+          "type": "object",
+          "required": ["components", "width", "vertical", "style"],
+          "properties": {
+            "components": { "$ref": "#/$defs/componentWeights" },
+            "width": { "$ref": "#/$defs/nonNegativeWeights" },
+            "vertical": { "$ref": "#/$defs/nonNegativeWeights" },
+            "style": { "$ref": "#/$defs/nonNegativeWeights" }
+          },
+          "additionalProperties": false
+        },
+        "adjustmentLimits": {
+          "type": "object",
+          "required": ["hwp", "hwpx"],
+          "properties": {
+            "hwp": { "$ref": "#/$defs/formatLimits" },
+            "hwpx": { "$ref": "#/$defs/formatLimits" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "coverageSetCheck": {
+      "type": "object",
+      "required": [
+        "set",
+        "requiredRatio",
+        "sourceRatio",
+        "candidateRatio",
+        "sourceMapped",
+        "candidateMapped",
+        "required",
+        "passed"
+      ],
+      "properties": {
+        "set": { "type": "string", "minLength": 1 },
+        "requiredRatio": { "$ref": "#/$defs/ratio" },
+        "sourceRatio": {
+          "oneOf": [{ "$ref": "#/$defs/ratio" }, { "type": "null" }]
+        },
+        "candidateRatio": {
+          "oneOf": [{ "$ref": "#/$defs/ratio" }, { "type": "null" }]
+        },
+        "sourceMapped": { "type": ["integer", "null"], "minimum": 0 },
+        "candidateMapped": { "type": ["integer", "null"], "minimum": 0 },
+        "required": { "type": ["integer", "null"], "minimum": 0 },
+        "passed": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "coverageFailure": {
+      "type": "object",
+      "required": ["set", "reason", "requiredRatio", "candidateRatio"],
+      "properties": {
+        "set": { "type": "string", "minLength": 1 },
+        "reason": { "enum": ["missing", "insufficient"] },
+        "requiredRatio": { "$ref": "#/$defs/ratio" },
+        "candidateRatio": {
+          "oneOf": [{ "$ref": "#/$defs/ratio" }, { "type": "null" }]
+        }
+      },
+      "additionalProperties": false
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["passed", "requiredSets", "checkedSets", "failures"],
+      "properties": {
+        "passed": { "type": "boolean" },
+        "requiredSets": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "checkedSets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/coverageSetCheck" }
+        },
+        "failures": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/coverageFailure" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "components": {
+      "type": "object",
+      "required": ["width", "space", "vertical", "style"],
+      "properties": {
+        "width": { "type": ["number", "null"], "minimum": 0 },
+        "space": { "type": ["number", "null"], "minimum": 0 },
+        "vertical": { "type": ["number", "null"], "minimum": 0 },
+        "style": { "type": ["number", "null"], "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "metricDelta": {
+      "type": "object",
+      "required": ["reference", "candidate", "relative"],
+      "properties": {
+        "reference": { "type": ["number", "boolean", "null"] },
+        "candidate": { "type": ["number", "boolean", "null"] },
+        "relative": { "type": ["number", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "metricDeltas": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/metricDelta" }
+    },
+    "deltas": {
+      "type": "object",
+      "required": ["width", "space", "vertical", "style"],
+      "properties": {
+        "width": { "$ref": "#/$defs/metricDeltas" },
+        "space": { "$ref": "#/$defs/metricDeltas" },
+        "vertical": { "$ref": "#/$defs/metricDeltas" },
+        "style": { "$ref": "#/$defs/metricDeltas" }
+      },
+      "additionalProperties": false
+    },
+    "missingMetrics": {
+      "type": "object",
+      "required": ["width", "space", "vertical", "style"],
+      "properties": {
+        "width": { "$ref": "#/$defs/stringArray" },
+        "space": { "$ref": "#/$defs/stringArray" },
+        "vertical": { "$ref": "#/$defs/stringArray" },
+        "style": { "$ref": "#/$defs/stringArray" }
+      },
+      "additionalProperties": false
+    },
+    "stringArray": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "formatAdjustment": {
+      "type": "object",
+      "required": ["ratio", "spacing", "rawRatio", "rawSpacing", "clamped"],
+      "properties": {
+        "ratio": { "type": "integer" },
+        "spacing": { "type": "integer" },
+        "rawRatio": { "type": "number" },
+        "rawSpacing": { "type": "number" },
+        "clamped": {
+          "type": "object",
+          "required": ["ratio", "spacing"],
+          "properties": {
+            "ratio": { "type": "boolean" },
+            "spacing": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "adjustments": {
+      "type": "object",
+      "required": ["hwp", "hwpx"],
+      "properties": {
+        "hwp": { "$ref": "#/$defs/formatAdjustment" },
+        "hwpx": { "$ref": "#/$defs/formatAdjustment" }
+      },
+      "additionalProperties": false
+    },
+    "candidate": {
+      "type": "object",
+      "required": [
+        "profileId",
+        "face",
+        "eligible",
+        "rejectionReasons",
+        "rank",
+        "distance",
+        "score",
+        "coverage",
+        "components",
+        "deltas",
+        "missingMetrics",
+        "adjustments"
+      ],
+      "properties": {
+        "profileId": { "$ref": "#/$defs/profileId" },
+        "face": { "$ref": "#/$defs/faceRef" },
+        "eligible": { "type": "boolean" },
+        "rejectionReasons": { "$ref": "#/$defs/stringArray" },
+        "rank": { "type": ["integer", "null"], "minimum": 1 },
+        "distance": { "type": ["number", "null"], "minimum": 0 },
+        "score": { "type": "number", "minimum": 0, "maximum": 100 },
+        "coverage": { "$ref": "#/$defs/coverage" },
+        "components": { "$ref": "#/$defs/components" },
+        "deltas": { "$ref": "#/$defs/deltas" },
+        "missingMetrics": { "$ref": "#/$defs/missingMetrics" },
+        "adjustments": { "$ref": "#/$defs/adjustments" }
+      },
+      "additionalProperties": false
+    },
+    "inputError": {
+      "type": "object",
+      "required": ["stage", "fileName", "code", "message"],
+      "properties": {
+        "stage": { "type": "string", "minLength": 1 },
+        "fileName": { "type": "string" },
+        "code": { "type": ["string", "null"] },
+        "message": { "type": "string", "minLength": 1 },
+        "faceIndex": { "type": "integer", "minimum": 0 },
+        "face": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

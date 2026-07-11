@@ -1,0 +1,884 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hwpkit.dev/schema/font-catalog.schema.json",
+  "title": "Hwpkit font metadata catalog",
+  "description": "hwpkit-font-meta analyze 명령이 만드는 재현 가능한 폰트 프로필 카탈로그입니다.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "schemaId",
+    "generator",
+    "fonts",
+    "errors"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri-reference"
+    },
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "schemaId": {
+      "const": "hwpkit.font-catalog/v1"
+    },
+    "generator": {
+      "$ref": "#/$defs/generator"
+    },
+    "fonts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fontProfile"
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/analysisError"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "finiteNumber": {
+      "type": "number"
+    },
+    "ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "generator": {
+      "type": "object",
+      "required": [
+        "name",
+        "version",
+        "parser",
+        "corpusId"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parser": {
+          "type": "string",
+          "minLength": 1
+        },
+        "shaper": {
+          "type": "string",
+          "minLength": 1
+        },
+        "corpusId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "corpusSha256": {
+          "oneOf": [
+            { "$ref": "#/$defs/sha256" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "fontProfile": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "schemaId",
+        "profileId",
+        "generator",
+        "source",
+        "face",
+        "coverage",
+        "metrics",
+        "layout",
+        "hwpkit",
+        "quality"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "1.0.0"
+        },
+        "schemaId": {
+          "const": "hwpkit.font-profile/v1"
+        },
+        "profileId": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}#face=[0-9]+(?:@[A-Za-z0-9 ]{4}=[^,@]+(?:,[A-Za-z0-9 ]{4}=[^,@]+)*)?$"
+        },
+        "generator": {
+          "$ref": "#/$defs/generator"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "face": {
+          "$ref": "#/$defs/face"
+        },
+        "coverage": {
+          "$ref": "#/$defs/coverage"
+        },
+        "metrics": {
+          "$ref": "#/$defs/metrics"
+        },
+        "layout": {
+          "$ref": "#/$defs/layout"
+        },
+        "hwpkit": {
+          "$ref": "#/$defs/hwpkit"
+        },
+        "quality": {
+          "$ref": "#/$defs/quality"
+        }
+      },
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "description": "로컬 절대 경로를 제외한 원본 파일 식별 정보입니다. TTC/OTC의 각 face는 동일 SHA-256과 서로 다른 faceIndex를 가집니다.",
+      "required": [
+        "fileName",
+        "sizeBytes",
+        "sha256",
+        "container",
+        "faceIndex",
+        "faceCount"
+      ],
+      "properties": {
+        "fileName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "container": {
+          "type": "string",
+          "minLength": 1
+        },
+        "faceIndex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "faceCount": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "face": {
+      "type": "object",
+      "required": [
+        "family",
+        "subfamily",
+        "fullName",
+        "postscriptName",
+        "aliases",
+        "version",
+        "weightClass",
+        "widthClass",
+        "italic",
+        "oblique",
+        "monospace",
+        "glyphCount",
+        "outlineFormat",
+        "variable",
+        "axes"
+      ],
+      "properties": {
+        "family": {
+          "type": ["string", "null"]
+        },
+        "subfamily": {
+          "type": ["string", "null"]
+        },
+        "fullName": {
+          "type": ["string", "null"]
+        },
+        "postscriptName": {
+          "type": ["string", "null"]
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "version": {
+          "type": ["string", "null"]
+        },
+        "weightClass": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "widthClass": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 9
+        },
+        "italic": {
+          "type": "boolean"
+        },
+        "oblique": {
+          "type": "boolean"
+        },
+        "monospace": {
+          "type": "boolean"
+        },
+        "glyphCount": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "outlineFormat": {
+          "type": ["string", "null"]
+        },
+        "variable": {
+          "type": "boolean"
+        },
+        "axes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/axis"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "axis": {
+      "type": "object",
+      "required": ["tag", "min", "default", "max"],
+      "properties": {
+        "tag": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 4
+        },
+        "name": {
+          "type": ["string", "null"]
+        },
+        "min": {
+          "$ref": "#/$defs/finiteNumber"
+        },
+        "default": {
+          "$ref": "#/$defs/finiteNumber"
+        },
+        "max": {
+          "$ref": "#/$defs/finiteNumber"
+        },
+        "hidden": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["sets", "missingSamples"],
+      "properties": {
+        "sets": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/coverageSet"
+          }
+        },
+        "missingSamples": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "coverageSet": {
+      "type": "object",
+      "required": ["required", "mapped", "missing", "ratio", "missingSamples"],
+      "properties": {
+        "required": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mapped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "missing": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ratio": {
+          "$ref": "#/$defs/ratio"
+        },
+        "missingSamples": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^U\\+[0-9A-F]{4,6}$"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "metrics": {
+      "type": "object",
+      "required": [
+        "unitsPerEm",
+        "raw",
+        "line",
+        "advance",
+        "ink",
+        "glyphs"
+      ],
+      "properties": {
+        "unitsPerEm": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "raw": {
+          "$ref": "#/$defs/rawMetrics"
+        },
+        "line": {
+          "$ref": "#/$defs/lineMetrics"
+        },
+        "advance": {
+          "$ref": "#/$defs/advanceMetrics"
+        },
+        "ink": {
+          "$ref": "#/$defs/inkMetrics"
+        },
+        "glyphs": {
+          "type": "object",
+          "description": "분석 probe 문자별 정규화 메트릭. 키는 실제 Unicode 문자입니다.",
+          "additionalProperties": {
+            "$ref": "#/$defs/glyphMetric"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "rawMetrics": {
+      "type": "object",
+      "description": "OpenType 표에서 읽은 font-unit 값입니다. 파서가 제공하지 않는 필드는 null일 수 있습니다.",
+      "required": ["head", "hhea", "os2", "post"],
+      "properties": {
+        "head": {
+          "$ref": "#/$defs/rawMetricTable"
+        },
+        "hhea": {
+          "$ref": "#/$defs/rawMetricTable"
+        },
+        "os2": {
+          "$ref": "#/$defs/rawMetricTable"
+        },
+        "post": {
+          "$ref": "#/$defs/rawMetricTable"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rawMetricTable": {
+      "type": "object",
+      "additionalProperties": {
+        "type": ["number", "boolean", "string", "object", "array", "null"]
+      }
+    },
+    "lineMetrics": {
+      "type": "object",
+      "required": [
+        "useTypoMetrics",
+        "typo",
+        "hhea",
+        "windows",
+        "engine",
+        "preferred",
+        "headBounds"
+      ],
+      "properties": {
+        "useTypoMetrics": {
+          "type": "boolean"
+        },
+        "typo": {
+          "$ref": "#/$defs/lineMetricSet"
+        },
+        "hhea": {
+          "$ref": "#/$defs/lineMetricSet"
+        },
+        "windows": {
+          "$ref": "#/$defs/lineMetricSet"
+        },
+        "engine": {
+          "$ref": "#/$defs/lineMetricSet"
+        },
+        "preferred": {
+          "$ref": "#/$defs/lineMetricSet"
+        },
+        "headBounds": {
+          "$ref": "#/$defs/lineMetricSet"
+        }
+      },
+      "additionalProperties": false
+    },
+    "lineMetricSet": {
+      "type": "object",
+      "description": "원시 font-unit 값과 em 정규화 값으로 구성된 세로 메트릭 묶음입니다.",
+      "additionalProperties": {
+        "type": ["number", "string", "null"]
+      }
+    },
+    "advanceMetrics": {
+      "type": "object",
+      "required": ["unit", "groups", "spaces", "codePoints", "hangulModel"],
+      "properties": {
+        "unit": {
+          "const": "em"
+        },
+        "groups": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/stats"
+          }
+        },
+        "spaces": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/spaceMetric"
+          }
+        },
+        "codePoints": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^U\\+[0-9A-F]{4,6}$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/finiteNumber"
+          }
+        },
+        "hangulModel": {
+          "$ref": "#/$defs/hangulAdvanceModel"
+        }
+      },
+      "additionalProperties": false
+    },
+    "spaceMetric": {
+      "type": "object",
+      "required": ["codePoint", "mapped", "glyphId", "advanceDu", "advanceEm"],
+      "properties": {
+        "codePoint": {
+          "type": "string",
+          "pattern": "^U\\+[0-9A-F]{4,6}$"
+        },
+        "mapped": {
+          "type": "boolean"
+        },
+        "glyphId": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "advanceDu": {
+          "type": ["number", "null"]
+        },
+        "advanceEm": {
+          "type": ["number", "null"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "hangulAdvanceModel": {
+      "type": "object",
+      "required": [
+        "encoding",
+        "start",
+        "end",
+        "defaultEm",
+        "defaultCount",
+        "measured",
+        "exceptions"
+      ],
+      "properties": {
+        "encoding": {
+          "const": "constant-plus-exceptions-v1"
+        },
+        "start": {
+          "const": "U+AC00"
+        },
+        "end": {
+          "const": "U+D7A3"
+        },
+        "defaultEm": {
+          "type": ["number", "null"]
+        },
+        "defaultCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "measured": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exceptions": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^U\\+[0-9A-F]{4,6}$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/finiteNumber"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "stats": {
+      "type": "object",
+      "properties": {
+        "expected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "measured": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "missing": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "coverage": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "unit": {
+          "const": "em"
+        },
+        "min": {
+          "type": ["number", "null"]
+        },
+        "max": {
+          "type": ["number", "null"]
+        },
+        "mean": {
+          "type": ["number", "null"]
+        },
+        "median": {
+          "type": ["number", "null"]
+        },
+        "p05": {
+          "type": ["number", "null"]
+        },
+        "p95": {
+          "type": ["number", "null"]
+        },
+        "stddev": {
+          "type": ["number", "null"]
+        },
+        "coefficientOfVariation": {
+          "type": ["number", "null"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "inkMetrics": {
+      "type": "object",
+      "required": ["probeSet"],
+      "properties": {
+        "probeSet": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": {
+        "type": ["number", "integer", "string", "object", "array", "null"]
+      }
+    },
+    "glyphMetric": {
+      "type": "object",
+      "properties": {
+        "codePoint": {
+          "type": "string",
+          "pattern": "^U\\+[0-9A-F]{4,6}$"
+        },
+        "glyphId": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "mapped": {
+          "type": "boolean"
+        },
+        "advanceRaw": {
+          "type": ["number", "null"]
+        },
+        "advanceEm": {
+          "type": ["number", "null"]
+        },
+        "ink": {
+          "type": ["object", "null"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "layout": {
+      "type": "object",
+      "required": ["corpusId", "corpusSha256", "samples"],
+      "properties": {
+        "corpusId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "corpusSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/layoutSample"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "layoutSample": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "textSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "normalization": {
+          "type": "string"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "codePointCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "glyphCount": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "spaceCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "missingCodePoints": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^U\\+[0-9A-F]{4,6}$"
+          }
+        },
+        "advanceDu": {
+          "type": ["number", "null"]
+        },
+        "advanceEm": {
+          "type": ["number", "null"]
+        },
+        "advanceNoKerningDu": {
+          "type": ["number", "null"]
+        },
+        "advanceNoKerningEm": {
+          "type": ["number", "null"]
+        },
+        "advancePerCodePointEm": {
+          "type": ["number", "null"]
+        },
+        "advanceNoKerningPerCodePointEm": {
+          "type": ["number", "null"]
+        },
+        "unshapedAdvanceEm": {
+          "type": ["number", "null"]
+        },
+        "kerningAdjustmentEm": {
+          "type": ["number", "null"]
+        },
+        "shapingAdjustmentEm": {
+          "type": ["number", "null"]
+        },
+        "error": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "hwpkit": {
+      "type": "object",
+      "required": ["units", "widthModel", "lineModel", "visualModel", "confidence"],
+      "properties": {
+        "units": {
+          "const": "em"
+        },
+        "widthModel": {
+          "$ref": "#/$defs/widthModel"
+        },
+        "lineModel": {
+          "$ref": "#/$defs/lineModel"
+        },
+        "visualModel": {
+          "$ref": "#/$defs/visualModel"
+        },
+        "confidence": {
+          "enum": ["high", "medium", "low"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "widthModel": {
+      "type": "object",
+      "required": [
+        "hangulEm",
+        "jamoEm",
+        "hanjaEm",
+        "latinUpperEm",
+        "latinLowerEm",
+        "digitEm",
+        "spaceEm",
+        "punctuationEm",
+        "bodyTextEm"
+      ],
+      "properties": {
+        "hangulEm": {
+          "type": ["number", "null"]
+        },
+        "jamoEm": {
+          "type": ["number", "null"]
+        },
+        "hanjaEm": {
+          "type": ["number", "null"]
+        },
+        "latinUpperEm": {
+          "type": ["number", "null"]
+        },
+        "latinLowerEm": {
+          "type": ["number", "null"]
+        },
+        "digitEm": {
+          "type": ["number", "null"]
+        },
+        "spaceEm": {
+          "type": ["number", "null"]
+        },
+        "punctuationEm": {
+          "type": ["number", "null"]
+        },
+        "bodyTextEm": {
+          "type": ["number", "null"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "lineModel": {
+      "type": "object",
+      "description": "HwpEncoder/HwpxEncoder가 줄 높이와 baseline을 계산할 때 쓰는 em 기반 값입니다.",
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "lineAdvanceEm": {
+          "type": ["number", "null"]
+        },
+        "ascenderEm": {
+          "type": ["number", "null"]
+        },
+        "descenderEm": {
+          "type": ["number", "null"]
+        },
+        "lineGapEm": {
+          "type": ["number", "null"]
+        },
+        "baselineFromTopEm": {
+          "type": ["number", "null"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "visualModel": {
+      "type": "object",
+      "required": [
+        "probeSet",
+        "hangulInkWidthEm",
+        "hangulInkHeightEm",
+        "hangulTopEm",
+        "hangulBottomEm",
+        "leftSideBearingEm",
+        "rightSideBearingEm"
+      ],
+      "properties": {
+        "probeSet": { "type": "string", "minLength": 1 },
+        "hangulInkWidthEm": { "type": ["number", "null"] },
+        "hangulInkHeightEm": { "type": ["number", "null"] },
+        "hangulTopEm": { "type": ["number", "null"] },
+        "hangulBottomEm": { "type": ["number", "null"] },
+        "leftSideBearingEm": { "type": ["number", "null"] },
+        "rightSideBearingEm": { "type": ["number", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "quality": {
+      "type": "object",
+      "required": ["status", "warnings"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "analysisError": {
+      "type": "object",
+      "required": ["stage", "message"],
+      "properties": {
+        "stage": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string"
+        },
+        "fileName": {
+          "type": "string"
+        },
+        "faceIndex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@hwpkit/font-metadata",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Korean font metric analyzer and fallback compatibility metadata generator for Hwpkit",
+  "type": "module",
+  "bin": {
+    "hwpkit-font-meta": "./bin/hwpkit-font-meta.mjs"
+  },
+  "scripts": {
+    "analyze": "node ./bin/hwpkit-font-meta.mjs analyze",
+    "compare": "node ./bin/hwpkit-font-meta.mjs compare",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "fontkit": "2.0.4"
+  }
+}

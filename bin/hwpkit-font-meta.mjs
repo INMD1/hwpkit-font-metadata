@@ -1,0 +1,415 @@
+#!/usr/bin/env node
+
+import { createHash } from "node:crypto";
+import {
+  mkdir,
+  readFile,
+  rename,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import path from "node:path";
+import process from "node:process";
+import { pathToFileURL } from "node:url";
+
+import { analyzeFontSources, createCatalog } from "../src/analyze.mjs";
+import { rankFontCandidates } from "../src/compare.mjs";
+import { PACKAGE_VERSION } from "../src/constants.mjs";
+import { discoverFontFiles, loadFontSources } from "../src/font-source.mjs";
+
+const DEFAULT_MAX_FILES = 256;
+const DEFAULT_MAX_FILE_SIZE_MIB = 512;
+const MAX_CORPUS_BYTES = 2 * 1024 * 1024;
+const MAX_CORPUS_CODE_POINTS = 20_000;
+const MAX_CORPUS_SAMPLES = 128;
+
+export const HELP = `Hwpkit Korean font metadata analyzer
+
+Usage:
+  hwpkit-font-meta analyze <font-or-directory...> [options]
+  hwpkit-font-meta compare --source <font> --candidates <font-or-directory...> [options]
+
+Analyze options:
+  -o, --output <file>       Write JSON to a file (default: stdout)
+      --face <name|index>   Analyze one face from a TTC/OTC collection
+      --corpus <text-file>  Add real document text (repeatable)
+      --compact             Emit compact JSON
+      --strict              Exit non-zero when any input failed
+
+Compare options:
+      --source <font>       Source/original font (required)
+      --source-face <face>  Source TTC/OTC face name or index
+      --candidates <paths>  Candidate files/directories; values continue to next option
+      --candidate <path>    Add one candidate path (repeatable)
+      --candidate-face <f>  Filter candidate TTC/OTC faces
+      --top <count>         Keep only the best eligible candidates
+  -o, --output <file>       Write JSON to a file (default: stdout)
+      --corpus <text-file>  Compare using additional real document text
+      --compact             Emit compact JSON
+      --strict              Exit non-zero when any input failed
+
+Safety options:
+      --max-files <count>           Maximum number of font files (default: 256)
+      --max-file-size-mib <count>   Maximum bytes per font in MiB (default: 512)
+
+Other:
+  -h, --help                Show this help
+  -v, --version             Show the package version
+`;
+
+function optionValue(args, index, name) {
+  const value = args[index + 1];
+  if (value === undefined || value.startsWith("--")) {
+    throw new Error(`${name} requires a value`);
+  }
+  return value;
+}
+
+function positiveInteger(value, name) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function parseCommonOption(args, index, options) {
+  const arg = args[index];
+  if (arg === "-o" || arg === "--output") {
+    options.output = optionValue(args, index, arg);
+    return 1;
+  }
+  if (arg === "--corpus") {
+    options.corpora.push(optionValue(args, index, arg));
+    return 1;
+  }
+  if (arg === "--compact") {
+    options.pretty = false;
+    return 0;
+  }
+  if (arg === "--strict") {
+    options.strict = true;
+    return 0;
+  }
+  if (arg === "--max-files") {
+    options.maxFiles = positiveInteger(optionValue(args, index, arg), arg);
+    return 1;
+  }
+  if (arg === "--max-file-size-mib") {
+    options.maxFileSizeMiB = positiveInteger(optionValue(args, index, arg), arg);
+    return 1;
+  }
+  return null;
+}
+
+function baseOptions() {
+  return {
+    output: null,
+    corpora: [],
+    pretty: true,
+    strict: false,
+    maxFiles: DEFAULT_MAX_FILES,
+    maxFileSizeMiB: DEFAULT_MAX_FILE_SIZE_MIB,
+  };
+}
+
+export function parseAnalyze(args) {
+  const options = { ...baseOptions(), inputs: [], face: null };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const consumed = parseCommonOption(args, index, options);
+    if (consumed !== null) {
+      index += consumed;
+      continue;
+    }
+    if (arg === "--face") {
+      options.face = optionValue(args, index, arg);
+      index += 1;
+    } else if (arg === "--") {
+      options.inputs.push(...args.slice(index + 1));
+      break;
+    } else if (arg.startsWith("-")) {
+      throw new Error(`Unknown analyze option: ${arg}`);
+    } else {
+      options.inputs.push(arg);
+    }
+  }
+  if (options.inputs.length === 0) {
+    throw new Error("analyze requires at least one font file or directory");
+  }
+  return options;
+}
+
+export function parseCompare(args) {
+  const options = {
+    ...baseOptions(),
+    source: null,
+    sourceFace: null,
+    candidates: [],
+    candidateFace: null,
+    top: null,
+  };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const consumed = parseCommonOption(args, index, options);
+    if (consumed !== null) {
+      index += consumed;
+      continue;
+    }
+    if (arg === "--source") {
+      options.source = optionValue(args, index, arg);
+      index += 1;
+    } else if (arg === "--source-face") {
+      options.sourceFace = optionValue(args, index, arg);
+      index += 1;
+    } else if (arg === "--candidate") {
+      options.candidates.push(optionValue(args, index, arg));
+      index += 1;
+    } else if (arg === "--candidates") {
+      let cursor = index + 1;
+      while (cursor < args.length && !args[cursor].startsWith("-")) {
+        options.candidates.push(args[cursor]);
+        cursor += 1;
+      }
+      if (cursor === index + 1) throw new Error("--candidates requires at least one path");
+      index = cursor - 1;
+    } else if (arg === "--candidate-face") {
+      options.candidateFace = optionValue(args, index, arg);
+      index += 1;
+    } else if (arg === "--top") {
+      options.top = positiveInteger(optionValue(args, index, arg), arg);
+      index += 1;
+    } else if (arg === "--") {
+      options.candidates.push(...args.slice(index + 1));
+      break;
+    } else if (arg.startsWith("-")) {
+      throw new Error(`Unknown compare option: ${arg}`);
+    } else {
+      options.candidates.push(arg);
+    }
+  }
+  if (!options.source) throw new Error("compare requires --source <font>");
+  if (options.candidates.length === 0) {
+    throw new Error("compare requires --candidates <font-or-directory...>");
+  }
+  return options;
+}
+
+function portableError(error) {
+  const inputPath = error?.path ?? error?.fileName ?? "font";
+  const fileName = path.basename(String(inputPath));
+  const rawMessage = error?.message ?? String(error);
+  const message = typeof rawMessage === "string" && String(inputPath)
+    ? rawMessage.split(String(inputPath)).join(fileName)
+    : String(rawMessage);
+  const result = {
+    stage: error?.stage ?? "unknown",
+    fileName,
+    code: error?.code ?? null,
+    message,
+  };
+  if (Number.isInteger(error?.faceIndex)) result.faceIndex = error.faceIndex;
+  if (error?.face != null) result.face = String(error.face);
+  return result;
+}
+
+async function discoverWithLimits(inputs, options) {
+  const discovery = await discoverFontFiles(inputs);
+  const errors = discovery.errors.map(portableError);
+  const accepted = [];
+  const maximumBytes = options.maxFileSizeMiB * 1024 * 1024;
+
+  for (const filePath of discovery.files) {
+    if (accepted.length >= options.maxFiles) {
+      errors.push({
+        stage: "limit",
+        fileName: path.basename(filePath),
+        code: "FONT_FILE_COUNT_LIMIT",
+        message: `Skipped because --max-files is ${options.maxFiles}`,
+      });
+      continue;
+    }
+    try {
+      const details = await stat(filePath);
+      if (details.size > maximumBytes) {
+        errors.push({
+          stage: "limit",
+          fileName: path.basename(filePath),
+          code: "FONT_FILE_SIZE_LIMIT",
+          message: `Font is ${details.size} bytes; limit is ${maximumBytes} bytes`,
+        });
+      } else {
+        accepted.push(filePath);
+      }
+    } catch (error) {
+      errors.push(
+        portableError({
+          stage: "stat",
+          path: filePath,
+          code: error?.code ?? null,
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
+  }
+  return { files: accepted, errors };
+}
+
+async function loadWithLimits(inputs, options, face) {
+  const limited = await discoverWithLimits(inputs, options);
+  const loaded = await loadFontSources(limited.files, { face });
+  return {
+    files: limited.files,
+    sources: loaded.sources,
+    errors: [...limited.errors, ...loaded.errors.map(portableError)],
+  };
+}
+
+function codePointSlice(text, maximum) {
+  return Array.from(text).slice(0, maximum).join("");
+}
+
+async function loadCorpusSamples(corpusPaths) {
+  const samples = [];
+  const uniquePaths = [...new Set(corpusPaths.map((item) => path.resolve(item)))].sort();
+  let remainingCodePoints = MAX_CORPUS_CODE_POINTS;
+
+  for (const corpusPath of uniquePaths) {
+    const details = await stat(corpusPath);
+    if (!details.isFile()) throw new Error(`Corpus is not a file: ${corpusPath}`);
+    if (details.size > MAX_CORPUS_BYTES) {
+      throw new Error(
+        `Corpus ${path.basename(corpusPath)} exceeds ${MAX_CORPUS_BYTES} bytes`,
+      );
+    }
+    const content = (await readFile(corpusPath, "utf8")).replace(/\r\n?/g, "\n");
+    const sourceSha256 = createHash("sha256").update(content, "utf8").digest("hex");
+    const lines = content
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const selectedLines = lines.length > 0 ? lines : [content];
+
+    for (let lineIndex = 0; lineIndex < selectedLines.length; lineIndex += 1) {
+      if (samples.length >= MAX_CORPUS_SAMPLES || remainingCodePoints <= 0) break;
+      const text = codePointSlice(selectedLines[lineIndex], Math.min(2_000, remainingCodePoints));
+      if (!text) continue;
+      remainingCodePoints -= Array.from(text).length;
+      samples.push({
+        id: `user:${sourceSha256.slice(0, 12)}:${lineIndex + 1}`,
+        normalization: "preserved",
+        text,
+        sourceSha256,
+      });
+    }
+  }
+  return samples;
+}
+
+async function writeJson(value, outputPath, pretty, protectedInputs = []) {
+  const payload = `${JSON.stringify(value, null, pretty ? 2 : 0)}\n`;
+  if (!outputPath || outputPath === "-") {
+    process.stdout.write(payload);
+    return;
+  }
+
+  const destination = path.resolve(outputPath);
+  if (protectedInputs.some((input) => path.resolve(input) === destination)) {
+    throw new Error(`Refusing to overwrite input font: ${destination}`);
+  }
+  await mkdir(path.dirname(destination), { recursive: true });
+  const temporary = `${destination}.${process.pid}.tmp`;
+  try {
+    await writeFile(temporary, payload, "utf8");
+    await rename(temporary, destination);
+  } catch (error) {
+    await unlink(temporary).catch(() => {});
+    throw error;
+  }
+}
+
+function reportSummary(kind, output, errorCount) {
+  if (!output || output === "-") return;
+  process.stderr.write(`${kind}: wrote ${output} (${errorCount} input error(s))\n`);
+}
+
+async function runAnalyze(options) {
+  const corpusSamples = await loadCorpusSamples(options.corpora);
+  const loaded = await loadWithLimits(options.inputs, options, options.face);
+  const analyzed = analyzeFontSources(loaded.sources, { corpusSamples });
+  const errors = [...loaded.errors, ...analyzed.errors.map(portableError)];
+  const catalog = createCatalog(analyzed.fonts, errors);
+
+  if (catalog.fonts.length === 0) {
+    throw new Error(`No font face was analyzed (${errors.length} input error(s))`);
+  }
+  await writeJson(catalog, options.output, options.pretty, loaded.files);
+  reportSummary("analyze", options.output, errors.length);
+  if (options.strict && errors.length > 0) process.exitCode = 2;
+}
+
+async function runCompare(options) {
+  const corpusSamples = await loadCorpusSamples(options.corpora);
+  const sourceLoaded = await loadWithLimits([options.source], options, options.sourceFace);
+  if (sourceLoaded.sources.length !== 1) {
+    throw new Error(
+      `Source resolved to ${sourceLoaded.sources.length} faces; use --source-face to select one`,
+    );
+  }
+  const candidateLoaded = await loadWithLimits(
+    options.candidates,
+    options,
+    options.candidateFace,
+  );
+  const sourceAnalyzed = analyzeFontSources(sourceLoaded.sources, { corpusSamples });
+  const candidatesAnalyzed = analyzeFontSources(candidateLoaded.sources, { corpusSamples });
+  const sourceProfile = sourceAnalyzed.fonts[0];
+  const candidates = candidatesAnalyzed.fonts.filter(
+    (profile) => profile.profileId !== sourceProfile.profileId,
+  );
+  if (candidates.length === 0) throw new Error("No distinct candidate font face was analyzed");
+
+  const result = rankFontCandidates(sourceProfile, candidates);
+  if (options.top !== null) result.candidates = result.candidates.slice(0, options.top);
+  const errors = [
+    ...sourceLoaded.errors,
+    ...candidateLoaded.errors,
+    ...sourceAnalyzed.errors.map(portableError),
+    ...candidatesAnalyzed.errors.map(portableError),
+  ];
+  if (errors.length > 0) result.errors = errors;
+  await writeJson(
+    result,
+    options.output,
+    options.pretty,
+    [...sourceLoaded.files, ...candidateLoaded.files],
+  );
+  reportSummary("compare", options.output, errors.length);
+  if (options.strict && errors.length > 0) process.exitCode = 2;
+}
+
+export async function main(argv = process.argv.slice(2)) {
+  const args = [...argv];
+  if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
+    process.stdout.write(HELP);
+    return;
+  }
+  if (args[0] === "-v" || args[0] === "--version") {
+    process.stdout.write(`${PACKAGE_VERSION}\n`);
+    return;
+  }
+
+  const command = args.shift();
+  if (command === "analyze") await runAnalyze(parseAnalyze(args));
+  else if (command === "compare") await runCompare(parseCompare(args));
+  else throw new Error(`Unknown command: ${command}\n\n${HELP}`);
+}
+
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  main().catch((error) => {
+    process.stderr.write(`hwpkit-font-meta: ${error instanceof Error ? error.message : error}\n`);
+    process.exitCode = 1;
+  });
+}
