@@ -940,6 +940,22 @@ export interface AnalyzeError {
   message: string;
 }
 
+/**
+ * Sorts font profiles into the catalog's stable order (family name, then file
+ * hash, then face index). Exported so callers merging profiles from multiple
+ * catalogs (see the CLI `merge` command) can reproduce the same ordering.
+ */
+export function sortFontProfiles<
+  T extends { face: { fullName: string | null }; source: { sha256: string; faceIndex: number } },
+>(fonts: T[]): T[] {
+  return fonts.sort(
+    (left, right) =>
+      (left.face.fullName ?? "").localeCompare(right.face.fullName ?? "", "ko") ||
+      left.source.sha256.localeCompare(right.source.sha256) ||
+      left.source.faceIndex - right.source.faceIndex,
+  );
+}
+
 export function analyzeFontSources(sources: readonly FontSource[], options: AnalyzeOptions = {}) {
   const fonts: FontProfile[] = [];
   const errors: AnalyzeError[] = [];
@@ -955,12 +971,7 @@ export function analyzeFontSources(sources: readonly FontSource[], options: Anal
       });
     }
   }
-  fonts.sort(
-    (left, right) =>
-      (left.face.fullName ?? "").localeCompare(right.face.fullName ?? "", "ko") ||
-      left.source.sha256.localeCompare(right.source.sha256) ||
-      left.source.faceIndex - right.source.faceIndex,
-  );
+  sortFontProfiles(fonts);
   return { fonts, errors };
 }
 

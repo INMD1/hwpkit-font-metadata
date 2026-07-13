@@ -4,14 +4,13 @@
 
 현재 Hwpkit encoder는 한글을 `1.0em`, 영문 대문자를 `0.65em`, 공백을 `0.32em`으로 보는 고정 폭 모델을 사용합니다. 이 값은 안전한 일반값이지만, 한글 폰트마다 서로 다른 글자 폭·공백 폭·줄 높이를 반영하지 못합니다. 이 프로젝트의 `hwpkit.widthModel`과 `hwpkit.lineModel`은 그 고정값을 폰트별 측정값으로 바꾸기 위한 입력 계약입니다.
 
-이 도구는 HWP/HWPX 파일을 직접 변경하지 않습니다. `runner/src/encoders` 본체도 이 프로젝트에서 수정하지 않으며, [examples/hwpkit-consumer.mjs](./examples/hwpkit-consumer.mjs)가 연결 어댑터와 교체 지점을 보여 줍니다.
+이 도구는 HWP/HWPX 파일을 직접 변경하지 않습니다. `hwpkit` 원본소스 본체도 이 프로젝트에서 수정하지 않으며, [examples/hwpkit-consumer.mjs](./examples/hwpkit-consumer.mjs)가 연결 어댑터와 교체 지점을 보여 줍니다.
 
 ## 설치
 
 요구 사항은 Node.js 18 이상입니다.
 
 ```bash
-cd runner/font-metadata
 npm ci
 npm run build
 node ./dist/bin/hwpkit-font-meta.js --help
@@ -21,7 +20,10 @@ node ./dist/bin/hwpkit-font-meta.js --help
 
 ## 빠른 사용법
 
-폰트 하나를 분석합니다. `-o`를 생략하면 JSON을 표준 출력으로 보냅니다.
+폰트 하나를 분석합니다. `-o`를 생략하면 JSON은 표준 출력이 아니라
+`./result/analyze-<타임스탬프>.json`에 자동 저장됩니다(자세한 내용은 아래
+["결과 저장 위치와 merge"](#결과-저장-위치와-merge) 참고). 표준 출력이 필요하면
+`-o -`를 명시적으로 지정하십시오.
 
 ```bash
 node ./dist/bin/hwpkit-font-meta.js analyze \
@@ -62,6 +64,37 @@ node ./dist/bin/hwpkit-font-meta.js compare \
 
 `--corpus`를 생략하면 버전이 고정된 기본 한국어 corpus를 사용합니다. 사용자 corpus는 기본 표본 뒤에 추가되며, `generator.corpusId`는 `hwpkit-ko-layout-v1+custom`으로 표시되고 `generator.corpusSha256`와 layout 값도 달라집니다. 서로 다른 `corpusSha256`로 만든 프로필은 같은 조건의 정밀 비교 자료로 섞지 않는 편이 안전합니다.
 
+## 결과 저장 위치와 merge
+
+`-o`/`--output`을 생략하면 파일명이 `<명령>-<타임스탬프>.json` 형식으로 `./result/`
+아래에 자동 저장됩니다.
+
+```bash
+node ./dist/bin/hwpkit-font-meta.js analyze ./fonts/본문체.ttf
+# → analyze: wrote result/analyze-20260713-185615809.json (0 input error(s))
+```
+
+여러 번 `analyze`를 실행해 `result/`에 카탈로그가 여러 개 쌓였다면 `merge`로 하나의
+카탈로그로 합칠 수 있습니다. 인자를 생략하면 `./result` 전체를 재귀적으로 훑습니다.
+
+```bash
+node ./dist/bin/hwpkit-font-meta.js merge
+node ./dist/bin/hwpkit-font-meta.js merge ./result/analyze-a.json ./result/analyze-b.json -o all-fonts.json
+```
+
+`merge`는 파일명이 아니라 JSON의 `schemaId`로 대상을 판단합니다. `hwpkit.font-catalog/v1`
+문서(`analyze` 결과)만 합쳐지고 `compare` 결과나 그 외 JSON은 조용히 건너뜁니다. 같은
+`profileId`를 가진 폰트가 여러 파일에 있으면 먼저 읽은 파일의 것만 채택합니다. 입력
+파일은 항상 경로 사전순으로 정렬해서 읽으므로 같은 입력 집합이면 실행할 때마다 같은
+결과가 나옵니다.
+
+표준 출력이 필요한 자동화 스크립트라면 세 명령 모두 `-o -`로 파일 저장을 건너뛸 수
+있습니다. `result/`는 `.gitignore`에 등록되어 있으므로, 분석 결과를 커밋하려면
+`git add -f`로 강제 추가해야 합니다.
+
+코드가 어떻게 구성되어 있고 이 동작을 어디서 바꾸는지는
+[HOWTO/00-시작하기.md](./HOWTO/00-시작하기.md)에서 시작하는 문서들을 참고하십시오.
+
 ## 명령 계약
 
 ### `analyze <font-or-directory...> [-o <file>] [--corpus <file>]`
@@ -71,6 +104,7 @@ node ./dist/bin/hwpkit-font-meta.js compare \
 - 컬렉션은 face마다 독립 프로필을 생성합니다. 하나만 필요하면 `--face <index-or-name>`을 사용합니다.
 - 일부 파일을 읽지 못해도 성공한 프로필은 `fonts`에 남고 실패 항목은 `errors`에 남습니다. 기본 모드는 부분 성공 시 0으로 종료하므로 자동화에서는 `--strict`를 사용하거나 `errors.length`를 확인하십시오.
 - `--max-files`와 `--max-file-size-mib`로 대량 입력과 비정상적으로 큰 파일을 제한할 수 있습니다.
+- `-o`를 생략하면 `./result/analyze-<타임스탬프>.json`에 저장됩니다. `-o -`는 표준 출력을 강제합니다.
 - 출력은 `schema/font-catalog.schema.json`의 `hwpkit.font-catalog/v1` 계약을 따릅니다.
 
 ### `compare --source <font> --candidates <font-or-directory...> [-o <file>] [--corpus <file>]`
@@ -79,7 +113,16 @@ node ./dist/bin/hwpkit-font-meta.js compare \
 - 후보의 가로 폭, 공백, 세로 메트릭, 스타일 속성과 필수 한글 coverage를 비교합니다.
 - 점수는 편의를 위한 상대 순위입니다. `score`만 보지 말고 `coverage`, `components`, `deltas`, `adjustments`를 함께 확인하십시오.
 - `--top <count>`는 적합 후보 출력 수를 제한하고, `--strict`는 입력 오류가 하나라도 있으면 비정상 종료합니다.
+- `-o`를 생략하면 `./result/compare-<타임스탬프>.json`에 저장됩니다. `-o -`는 표준 출력을 강제합니다.
 - 출력은 `schema/font-comparison.schema.json`의 `hwpkit.font-comparison/v1` 계약을 따릅니다.
+
+### `merge [json-or-directory...] [-o <file>]`
+
+- `analyze`가 만든 `hwpkit.font-catalog/v1` 카탈로그 JSON 여러 개를 하나로 합칩니다. 인자를 생략하면 `./result`를 재귀적으로 스캔합니다.
+- 대상 판단은 파일명이 아니라 JSON의 `schemaId`로 합니다. 일치하지 않는 파일(예: `compare` 결과)은 조용히 건너뜁니다.
+- 같은 `profileId`가 여러 파일에 있으면 경로 사전순으로 먼저 읽힌 파일의 항목을 채택합니다.
+- `-o`를 생략하면 `./result/merged-<타임스탬프>.json`에 저장됩니다. `-o -`는 표준 출력을 강제합니다.
+- 출력은 `analyze`와 동일하게 `schema/font-catalog.schema.json`의 `hwpkit.font-catalog/v1` 계약을 따릅니다.
 
 경로에 공백이 있으면 셸에서 따옴표로 감쌉니다.
 
