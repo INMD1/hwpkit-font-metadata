@@ -1,6 +1,6 @@
 const DEFAULT_PRECISION = 6;
 
-export function round(value, precision = DEFAULT_PRECISION) {
+export function round(value: number | null | undefined, precision = DEFAULT_PRECISION): number | null {
   if (value === null || value === undefined || !Number.isFinite(value)) {
     return null;
   }
@@ -8,14 +8,14 @@ export function round(value, precision = DEFAULT_PRECISION) {
   return Math.round((value + Number.EPSILON) * factor) / factor;
 }
 
-export function safeRatio(numerator, denominator) {
+export function safeRatio(numerator: number, denominator: number): number | null {
   if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) {
     return null;
   }
   return numerator / denominator;
 }
 
-export function quantile(sortedValues, probability) {
+export function quantile(sortedValues: number[], probability: number): number | null {
   if (sortedValues.length === 0) return null;
   if (sortedValues.length === 1) return sortedValues[0];
   const position = (sortedValues.length - 1) * probability;
@@ -29,8 +29,32 @@ export function quantile(sortedValues, probability) {
   );
 }
 
-export function describe(values, { expected = values.length, unit = "em" } = {}) {
-  const finiteValues = values.filter(Number.isFinite).sort((left, right) => left - right);
+export interface DescribeOptions {
+  expected?: number;
+  unit?: string;
+}
+
+export interface Summary {
+  expected: number;
+  measured: number;
+  missing: number;
+  coverage: number | null;
+  unit: string;
+  min: number | null;
+  p05: number | null;
+  median: number | null;
+  mean: number | null;
+  p95: number | null;
+  max: number | null;
+  stddev: number | null;
+  coefficientOfVariation: number | null;
+}
+
+export function describe(
+  values: Array<number | null | undefined>,
+  { expected = values.length, unit = "em" }: DescribeOptions = {},
+): Summary {
+  const finiteValues = values.filter((value): value is number => Number.isFinite(value)).sort((left, right) => left - right);
   const measured = finiteValues.length;
   const missing = Math.max(0, expected - measured);
   const coverage = expected > 0 ? measured / expected : null;
@@ -75,7 +99,7 @@ export function describe(values, { expected = values.length, unit = "em" } = {})
   };
 }
 
-export function median(values) {
-  const finiteValues = values.filter(Number.isFinite).sort((left, right) => left - right);
+export function median(values: Array<number | null | undefined>): number | null {
+  const finiteValues = values.filter((value): value is number => Number.isFinite(value)).sort((left, right) => left - right);
   return quantile(finiteValues, 0.5);
 }

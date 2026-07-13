@@ -15,19 +15,19 @@ export const FONT_EXTENSIONS = new Set([
   ".woff2",
 ]);
 
-export function codePointRange(start, end) {
-  const result = [];
+export function codePointRange(start: number, end: number): number[] {
+  const result: number[] = [];
   for (let codePoint = start; codePoint <= end; codePoint += 1) {
     result.push(codePoint);
   }
   return result;
 }
 
-export function codePoints(text) {
-  return Array.from(text, (character) => character.codePointAt(0));
+export function codePoints(text: string): number[] {
+  return Array.from(text, (character) => character.codePointAt(0) as number);
 }
 
-export function uniqueCodePoints(text) {
+export function uniqueCodePoints(text: string): number[] {
   return [...new Set(codePoints(text))];
 }
 
@@ -131,7 +131,13 @@ export const REPRESENTATIVE_GLYPHS = Object.freeze([
   "。",
 ]);
 
-export const DEFAULT_LAYOUT_SAMPLES = Object.freeze([
+export interface LayoutSample {
+  id: string;
+  normalization: string;
+  text: string;
+}
+
+export const DEFAULT_LAYOUT_SAMPLES: readonly LayoutSample[] = Object.freeze([
   {
     id: "ko-body",
     normalization: "NFC",
@@ -159,9 +165,9 @@ export const DEFAULT_LAYOUT_SAMPLES = Object.freeze([
   },
 ]);
 
-export function evenlySpacedCodePoints(start, end, count) {
+export function evenlySpacedCodePoints(start: number, end: number, count: number): number[] {
   if (count <= 1) return [start];
-  const result = [];
+  const result: number[] = [];
   const span = end - start;
   for (let index = 0; index < count; index += 1) {
     result.push(Math.round(start + (span * index) / (count - 1)));
@@ -173,7 +179,7 @@ export const HANGUL_INK_PROBES = Object.freeze([
   ...new Set([
     ...evenlySpacedCodePoints(0xac00, 0xd7a3, 256),
     ...REPRESENTATIVE_GLYPHS
-      .map((character) => character.codePointAt(0))
+      .map((character) => character.codePointAt(0) as number)
       .filter((codePoint) => codePoint >= 0xac00 && codePoint <= 0xd7a3),
   ]),
 ]);

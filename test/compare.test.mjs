@@ -6,7 +6,7 @@ import {
   compareFontProfiles,
   computeFormatAdjustments,
   rankFontCandidates,
-} from '../src/compare.mjs';
+} from '../dist/src/compare.js';
 
 function makeProfile(profileId, overrides = {}) {
   const width = {

@@ -11,7 +11,7 @@ import {
   discoverFontFiles,
   isSupportedFontFile,
   loadFontSources,
-} from '../src/font-source.mjs';
+} from '../dist/src/font-source.js';
 
 const STANDALONE_FONT_CANDIDATES = [
   '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',

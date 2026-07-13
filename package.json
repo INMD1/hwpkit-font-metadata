@@ -4,12 +4,25 @@
   "private": true,
   "description": "Korean font metric analyzer and fallback compatibility metadata generator for Hwpkit",
   "type": "module",
-  "bin": {
-    "hwpkit-font-meta": "./bin/hwpkit-font-meta.mjs"
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
   },
+  "bin": {
+    "hwpkit-font-meta": "./dist/bin/hwpkit-font-meta.js"
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "analyze": "node ./bin/hwpkit-font-meta.mjs analyze",
-    "compare": "node ./bin/hwpkit-font-meta.mjs compare",
+    "build": "tsc -p tsconfig.json && chmod +x dist/bin/hwpkit-font-meta.js",
+    "analyze": "npm run build --silent && node ./dist/bin/hwpkit-font-meta.js analyze",
+    "compare": "npm run build --silent && node ./dist/bin/hwpkit-font-meta.js compare",
+    "pretest": "npm run build --silent",
     "test": "node --test"
   },
   "engines": {
@@ -17,5 +30,10 @@
   },
   "dependencies": {
     "fontkit": "2.0.4"
+  },
+  "devDependencies": {
+    "@types/fontkit": "^2.0.9",
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2"
   }
 }

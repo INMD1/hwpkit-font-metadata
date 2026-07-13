@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 
+import type { Font, Glyph } from "fontkit";
+
 import {
   ADVANCE_GROUPS,
   CATALOG_SCHEMA_ID,
@@ -14,14 +16,40 @@ import {
   REPRESENTATIVE_GLYPHS,
   SCHEMA_VERSION,
   SPACE_CODE_POINTS,
-} from "./constants.mjs";
-import { describe, round } from "./stats.mjs";
+} from "./constants.js";
+import type { LayoutSample } from "./constants.js";
+import { describe, round } from "./stats.js";
+import type { Summary } from "./stats.js";
+import type { FontSource } from "./font-source.js";
 
-function sha256Text(value) {
+/**
+ * fontkit's published types cover the documented API but not every raw sfnt
+ * table property this module reads (head/post/directory, and OS/2 subfields
+ * beyond what @types/fontkit declares). Those are accessed through this
+ * loosely typed view instead of widening the public Font type everywhere.
+ */
+interface RawFont extends Font {
+  head?: {
+    xMin?: number;
+    yMin?: number;
+    xMax?: number;
+    yMax?: number;
+    macStyle?: { italic?: boolean };
+  };
+  post?: {
+    italicAngle?: number;
+    underlinePosition?: number;
+    underlineThickness?: number;
+    isFixedPitch?: boolean;
+  };
+  directory?: { tables?: Record<string, unknown> };
+}
+
+function sha256Text(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-function corpusFingerprint(samples) {
+function corpusFingerprint(samples: readonly LayoutSample[]): string {
   return sha256Text(
     samples
       .map((sample) => `${sample.id}\0${sample.normalization ?? "none"}\0${sample.text}`)
@@ -29,21 +57,23 @@ function corpusFingerprint(samples) {
   );
 }
 
-function valueOrNull(value) {
-  return Number.isFinite(value) ? value : null;
+function valueOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function em(value, unitsPerEm) {
-  return Number.isFinite(value) && unitsPerEm > 0 ? round(value / unitsPerEm) : null;
+function em(value: number | null | undefined, unitsPerEm: number): number | null {
+  return typeof value === "number" && Number.isFinite(value) && unitsPerEm > 0
+    ? round(value / unitsPerEm)
+    : null;
 }
 
-function codePointLabel(codePoint) {
+function codePointLabel(codePoint: number): string {
   return `U+${codePoint.toString(16).toUpperCase().padStart(4, "0")}`;
 }
 
-function uniqueStrings(values) {
-  const result = [];
-  const seen = new Set();
+function uniqueStrings(values: Array<string | null | undefined>): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
   for (const value of values) {
     const normalized = typeof value === "string" ? value.trim() : "";
     const key = normalized.toLocaleLowerCase("en-US");
@@ -55,7 +85,7 @@ function uniqueStrings(values) {
   return result;
 }
 
-function table(font, name) {
+function table<K extends keyof RawFont>(font: RawFont, name: K): RawFont[K] | null {
   try {
     return font[name] ?? null;
   } catch {
@@ -63,11 +93,11 @@ function table(font, name) {
   }
 }
 
-function tableTags(font) {
+function tableTags(font: RawFont): Set<string> {
   return new Set(Object.keys(font?.directory?.tables ?? {}));
 }
 
-function detectOutlineFormat(font) {
+function detectOutlineFormat(font: RawFont): string {
   const tags = tableTags(font);
   if (tags.has("glyf")) return "TrueType";
   if (tags.has("CFF2")) return "CFF2";
@@ -75,8 +105,26 @@ function detectOutlineFormat(font) {
   return "unknown";
 }
 
-function normalLineMetric(ascender, descender, lineGap, unitsPerEm) {
-  const valid = [ascender, descender, lineGap].every(Number.isFinite);
+interface NormalLineMetric {
+  ascenderDu: number | null;
+  descenderDu: number | null;
+  lineGapDu: number | null;
+  lineAdvanceDu: number | null;
+  ascenderEm: number | null;
+  descenderEm: number | null;
+  lineGapEm: number | null;
+  lineAdvanceEm: number | null;
+  baselineFromTopEm: number | null;
+  baselineFraction: number | null;
+}
+
+function normalLineMetric(
+  ascender: number | null | undefined,
+  descender: number | null | undefined,
+  lineGap: number | null | undefined,
+  unitsPerEm: number,
+): NormalLineMetric {
+  const valid = [ascender, descender, lineGap].every((value) => Number.isFinite(value));
   if (!valid) {
     return {
       ascenderDu: null,
@@ -91,27 +139,40 @@ function normalLineMetric(ascender, descender, lineGap, unitsPerEm) {
       baselineFraction: null,
     };
   }
-  const lineAdvance = ascender - descender + lineGap;
+  const lineAdvance = (ascender as number) - (descender as number) + (lineGap as number);
   return {
-    ascenderDu: ascender,
-    descenderDu: descender,
-    lineGapDu: lineGap,
+    ascenderDu: ascender as number,
+    descenderDu: descender as number,
+    lineGapDu: lineGap as number,
     lineAdvanceDu: lineAdvance,
     ascenderEm: em(ascender, unitsPerEm),
     descenderEm: em(descender, unitsPerEm),
     lineGapEm: em(lineGap, unitsPerEm),
     lineAdvanceEm: em(lineAdvance, unitsPerEm),
     baselineFromTopEm: em(ascender, unitsPerEm),
-    baselineFraction: round(lineAdvance === 0 ? null : ascender / lineAdvance),
+    baselineFraction: round(lineAdvance === 0 ? null : (ascender as number) / lineAdvance),
   };
 }
 
-function windowsLineMetric(ascender, descender, unitsPerEm) {
-  const valid = [ascender, descender].every(Number.isFinite);
-  const height = valid ? ascender + descender : null;
+interface WindowsLineMetric {
+  ascenderDu: number | null;
+  descenderDu: number | null;
+  heightDu: number | null;
+  ascenderEm: number | null;
+  descenderEm: number | null;
+  heightEm: number | null;
+}
+
+function windowsLineMetric(
+  ascender: number | null | undefined,
+  descender: number | null | undefined,
+  unitsPerEm: number,
+): WindowsLineMetric {
+  const valid = [ascender, descender].every((value) => Number.isFinite(value));
+  const height = valid ? (ascender as number) + (descender as number) : null;
   return {
-    ascenderDu: valid ? ascender : null,
-    descenderDu: valid ? descender : null,
+    ascenderDu: valid ? (ascender as number) : null,
+    descenderDu: valid ? (descender as number) : null,
     heightDu: height,
     ascenderEm: em(ascender, unitsPerEm),
     descenderEm: em(descender, unitsPerEm),
@@ -119,7 +180,26 @@ function windowsLineMetric(ascender, descender, unitsPerEm) {
   };
 }
 
-function extractLineMetrics(font, unitsPerEm, warnings) {
+interface LineMetrics {
+  useTypoMetrics: boolean;
+  typo: NormalLineMetric;
+  hhea: NormalLineMetric;
+  windows: WindowsLineMetric;
+  engine: NormalLineMetric;
+  preferred: NormalLineMetric & { source: string };
+  headBounds: {
+    xMinDu: number | null;
+    yMinDu: number | null;
+    xMaxDu: number | null;
+    yMaxDu: number | null;
+    xMinEm: number | null;
+    yMinEm: number | null;
+    xMaxEm: number | null;
+    yMaxEm: number | null;
+  };
+}
+
+function extractLineMetrics(font: RawFont, unitsPerEm: number, warnings: string[]): LineMetrics {
   const head = table(font, "head");
   const hhea = table(font, "hhea");
   const os2 = table(font, "OS/2");
@@ -140,7 +220,7 @@ function extractLineMetrics(font, unitsPerEm, warnings) {
   const useTypoMetrics = Boolean(os2?.fsSelection?.useTypoMetrics);
 
   let source = "hhea";
-  let preferred = horizontal;
+  let preferred: NormalLineMetric = horizontal;
   if (useTypoMetrics && typo.lineAdvanceEm !== null) {
     source = "OS/2.sTypo";
     preferred = typo;
@@ -175,14 +255,14 @@ function extractLineMetrics(font, unitsPerEm, warnings) {
   };
 }
 
-function rawMetrics(font) {
+function rawMetrics(font: RawFont) {
   const head = table(font, "head");
   const hhea = table(font, "hhea");
   const os2 = table(font, "OS/2");
   const post = table(font, "post");
   return {
     head: {
-      unitsPerEm: valueOrNull(head?.unitsPerEm),
+      unitsPerEm: valueOrNull(font.unitsPerEm),
       xMin: valueOrNull(head?.xMin),
       yMin: valueOrNull(head?.yMin),
       xMax: valueOrNull(head?.xMax),
@@ -226,26 +306,49 @@ function rawMetrics(font) {
   };
 }
 
-function createGlyphReader(font, unitsPerEm) {
-  const characterSet = new Set(font.characterSet ?? []);
-  const cache = new Map();
+interface MappedGlyph {
+  mapped: true;
+  codePoint: number;
+  glyph: Glyph;
+  glyphId: number;
+  advanceDu: number | null;
+  advanceEm: number | null;
+}
 
-  function read(codePoint) {
-    if (cache.has(codePoint)) return cache.get(codePoint);
+interface MissingGlyph {
+  mapped: false;
+  codePoint: number;
+  error?: string;
+}
+
+type GlyphRecord = MappedGlyph | MissingGlyph;
+
+interface GlyphReader {
+  read(codePoint: number): GlyphRecord;
+  characterSet: Set<number>;
+}
+
+function createGlyphReader(font: RawFont, unitsPerEm: number): GlyphReader {
+  const characterSet = new Set(font.characterSet ?? []);
+  const cache = new Map<number, GlyphRecord>();
+
+  function read(codePoint: number): GlyphRecord {
+    const cached = cache.get(codePoint);
+    if (cached) return cached;
     if (!characterSet.has(codePoint)) {
-      const missing = { mapped: false, codePoint };
+      const missing: GlyphRecord = { mapped: false, codePoint };
       cache.set(codePoint, missing);
       return missing;
     }
     try {
       const glyph = font.glyphForCodePoint(codePoint);
       if (!glyph || glyph.id === 0) {
-        const missing = { mapped: false, codePoint };
+        const missing: GlyphRecord = { mapped: false, codePoint };
         cache.set(codePoint, missing);
         return missing;
       }
       const advanceDu = valueOrNull(glyph.advanceWidth);
-      const result = {
+      const result: GlyphRecord = {
         mapped: true,
         codePoint,
         glyph,
@@ -256,7 +359,7 @@ function createGlyphReader(font, unitsPerEm) {
       cache.set(codePoint, result);
       return result;
     } catch (error) {
-      const missing = {
+      const missing: GlyphRecord = {
         mapped: false,
         codePoint,
         error: error instanceof Error ? error.message : String(error),
@@ -269,8 +372,16 @@ function createGlyphReader(font, unitsPerEm) {
   return { read, characterSet };
 }
 
-function coverageFor(codePointSet, reader) {
-  const missing = [];
+interface CoverageSetResult {
+  required: number;
+  mapped: number;
+  missing: number;
+  ratio: number | null;
+  missingSamples: string[];
+}
+
+function coverageFor(codePointSet: readonly number[], reader: GlyphReader): CoverageSetResult {
+  const missing: string[] = [];
   let mapped = 0;
   for (const codePoint of codePointSet) {
     if (reader.read(codePoint).mapped) mapped += 1;
@@ -286,7 +397,12 @@ function coverageFor(codePointSet, reader) {
   };
 }
 
-function extractCoverage(reader) {
+interface Coverage {
+  sets: Record<string, CoverageSetResult>;
+  missingSamples: string[];
+}
+
+function extractCoverage(reader: GlyphReader): Coverage {
   const sets = Object.fromEntries(
     Object.entries(COVERAGE_SETS).map(([name, codePointSet]) => [
       name,
@@ -298,16 +414,16 @@ function extractCoverage(reader) {
   return { sets, missingSamples };
 }
 
-function advanceStats(codePointSet, reader) {
-  const advances = [];
+function advanceStats(codePointSet: readonly number[], reader: GlyphReader): Summary {
+  const advances: number[] = [];
   for (const codePoint of codePointSet) {
     const glyph = reader.read(codePoint);
-    if (glyph.mapped && Number.isFinite(glyph.advanceEm)) advances.push(glyph.advanceEm);
+    if (glyph.mapped && Number.isFinite(glyph.advanceEm)) advances.push(glyph.advanceEm as number);
   }
   return describe(advances, { expected: codePointSet.length, unit: "em" });
 }
 
-function extractSpaces(reader) {
+function extractSpaces(reader: GlyphReader) {
   return Object.fromEntries(
     Object.entries(SPACE_CODE_POINTS).map(([name, codePoint]) => {
       const glyph = reader.read(codePoint);
@@ -320,35 +436,35 @@ function extractSpaces(reader) {
           advanceDu: glyph.mapped ? glyph.advanceDu : null,
           advanceEm: glyph.mapped ? glyph.advanceEm : null,
         },
-      ];
+      ] as const;
     }),
   );
 }
 
-function extractCodePointAdvances(reader) {
-  const codePointSet = new Set([
+function extractCodePointAdvances(reader: GlyphReader): Record<string, number> {
+  const codePointSet = new Set<number>([
     ...Object.values(ADVANCE_GROUPS)
       .filter((group) => group !== ADVANCE_GROUPS.modernHangulSyllables)
       .flat(),
     ...Object.values(SPACE_CODE_POINTS),
   ]);
-  const result = {};
+  const result: Record<string, number> = {};
   for (const codePoint of [...codePointSet].sort((left, right) => left - right)) {
     const glyph = reader.read(codePoint);
     if (glyph.mapped && Number.isFinite(glyph.advanceEm)) {
-      result[codePointLabel(codePoint)] = glyph.advanceEm;
+      result[codePointLabel(codePoint)] = glyph.advanceEm as number;
     }
   }
   return result;
 }
 
-function buildHangulAdvanceModel(reader) {
-  const valueCounts = new Map();
-  const measured = [];
+function buildHangulAdvanceModel(reader: GlyphReader) {
+  const valueCounts = new Map<number, number>();
+  const measured: Array<[number, number]> = [];
   for (const codePoint of COVERAGE_SETS.modernHangulSyllables) {
     const glyph = reader.read(codePoint);
     if (!glyph.mapped || !Number.isFinite(glyph.advanceEm)) continue;
-    const value = round(glyph.advanceEm);
+    const value = round(glyph.advanceEm) as number;
     measured.push([codePoint, value]);
     valueCounts.set(value, (valueCounts.get(value) ?? 0) + 1);
   }
@@ -357,7 +473,7 @@ function buildHangulAdvanceModel(reader) {
       rightCount - leftCount || leftValue - rightValue,
   );
   const defaultEm = rankedDefaults[0]?.[0] ?? null;
-  const exceptions = {};
+  const exceptions: Record<string, number> = {};
   if (defaultEm !== null) {
     for (const [codePoint, value] of measured) {
       if (value !== defaultEm) exceptions[codePointLabel(codePoint)] = value;
@@ -374,13 +490,13 @@ function buildHangulAdvanceModel(reader) {
   };
 }
 
-function extractAdvanceMetrics(reader) {
+function extractAdvanceMetrics(reader: GlyphReader) {
   const groups = Object.fromEntries(
     Object.entries(ADVANCE_GROUPS).map(([name, codePointSet]) => [
       name,
       advanceStats(codePointSet, reader),
     ]),
-  );
+  ) as Record<keyof typeof ADVANCE_GROUPS, Summary>;
   return {
     unit: "em",
     groups,
@@ -390,7 +506,18 @@ function extractAdvanceMetrics(reader) {
   };
 }
 
-function bboxRecord(glyphRecord, unitsPerEm) {
+interface BBoxRecord {
+  minXEm: number | null;
+  minYEm: number | null;
+  maxXEm: number | null;
+  maxYEm: number | null;
+  widthEm: number | null;
+  heightEm: number | null;
+  leftSideBearingEm: number | null;
+  rightSideBearingEm: number | null;
+}
+
+function bboxRecord(glyphRecord: GlyphRecord, unitsPerEm: number): BBoxRecord | null {
   if (!glyphRecord.mapped) return null;
   try {
     const bbox = glyphRecord.glyph.bbox;
@@ -405,20 +532,20 @@ function bboxRecord(glyphRecord, unitsPerEm) {
       widthEm: em(width, unitsPerEm),
       heightEm: em(height, unitsPerEm),
       leftSideBearingEm: em(bbox.minX, unitsPerEm),
-      rightSideBearingEm: em(glyphRecord.advanceDu - bbox.maxX, unitsPerEm),
+      rightSideBearingEm: em((glyphRecord.advanceDu ?? 0) - bbox.maxX, unitsPerEm),
     };
   } catch {
     return null;
   }
 }
 
-function extractInkMetrics(reader, unitsPerEm) {
-  const records = [];
+function extractInkMetrics(reader: GlyphReader, unitsPerEm: number) {
+  const records: BBoxRecord[] = [];
   for (const codePoint of HANGUL_INK_PROBES) {
     const record = bboxRecord(reader.read(codePoint), unitsPerEm);
     if (record) records.push(record);
   }
-  const field = (name) => records.map((record) => record[name]);
+  const field = (name: keyof BBoxRecord) => records.map((record) => record[name]);
   return {
     probeSet: "hangul-balanced-v1",
     expected: HANGUL_INK_PROBES.length,
@@ -450,41 +577,41 @@ function extractInkMetrics(reader, unitsPerEm) {
   };
 }
 
-function extractRepresentativeGlyphs(reader, unitsPerEm) {
+function extractRepresentativeGlyphs(reader: GlyphReader, unitsPerEm: number) {
   return Object.fromEntries(
     REPRESENTATIVE_GLYPHS.map((character) => {
-      const glyph = reader.read(character.codePointAt(0));
+      const glyph = reader.read(character.codePointAt(0) as number);
       return [
         character,
         {
-          codePoint: codePointLabel(character.codePointAt(0)),
+          codePoint: codePointLabel(character.codePointAt(0) as number),
           mapped: glyph.mapped,
           glyphId: glyph.mapped ? glyph.glyphId : null,
           advanceDu: glyph.mapped ? glyph.advanceDu : null,
           advanceEm: glyph.mapped ? glyph.advanceEm : null,
           bbox: bboxRecord(glyph, unitsPerEm),
         },
-      ];
+      ] as const;
     }),
   );
 }
 
-function countSpaces(text) {
-  const spaces = new Set(Object.values(SPACE_CODE_POINTS));
+function countSpaces(text: string): number {
+  const spaces = new Set<number>(Object.values(SPACE_CODE_POINTS));
   return Array.from(text).reduce(
-    (count, character) => count + (spaces.has(character.codePointAt(0)) ? 1 : 0),
+    (count, character) => count + (spaces.has(character.codePointAt(0) as number) ? 1 : 0),
     0,
   );
 }
 
-function shapeSample(font, sample, reader, unitsPerEm) {
+function shapeSample(font: Font, sample: LayoutSample, reader: GlyphReader, unitsPerEm: number) {
   const characters = Array.from(sample.text);
-  const missing = [];
+  const missing: string[] = [];
   let unshapedAdvanceDu = 0;
   for (const character of characters) {
-    const codePoint = character.codePointAt(0);
+    const codePoint = character.codePointAt(0) as number;
     const glyph = reader.read(codePoint);
-    if (glyph.mapped && Number.isFinite(glyph.advanceDu)) unshapedAdvanceDu += glyph.advanceDu;
+    if (glyph.mapped && Number.isFinite(glyph.advanceDu)) unshapedAdvanceDu += glyph.advanceDu as number;
     else if (missing.length < 24) missing.push(codePointLabel(codePoint));
   }
 
@@ -523,6 +650,7 @@ function shapeSample(font, sample, reader, unitsPerEm) {
       unshapedAdvanceEm: em(unshapedAdvanceDu, unitsPerEm),
       kerningAdjustmentEm: em(advanceDu - advanceWithoutKerningDu, unitsPerEm),
       shapingAdjustmentEm: em(advanceDu - unshapedAdvanceDu, unitsPerEm),
+      error: undefined as string | undefined,
     };
   } catch (error) {
     return {
@@ -531,24 +659,32 @@ function shapeSample(font, sample, reader, unitsPerEm) {
       normalization: sample.normalization ?? "none",
       complete: false,
       codePointCount: characters.length,
-      glyphCount: null,
+      glyphCount: null as number | null,
       spaceCount: countSpaces(sample.text),
       missingCodePoints: [...new Set(missing)],
-      advanceDu: null,
-      advanceEm: null,
-      advanceNoKerningDu: null,
-      advanceNoKerningEm: null,
-      advancePerCodePointEm: null,
-      advanceNoKerningPerCodePointEm: null,
+      advanceDu: null as number | null,
+      advanceEm: null as number | null,
+      advanceNoKerningDu: null as number | null,
+      advanceNoKerningEm: null as number | null,
+      advancePerCodePointEm: null as number | null,
+      advanceNoKerningPerCodePointEm: null as number | null,
       unshapedAdvanceEm: em(unshapedAdvanceDu, unitsPerEm),
-      kerningAdjustmentEm: null,
-      shapingAdjustmentEm: null,
+      kerningAdjustmentEm: null as number | null,
+      shapingAdjustmentEm: null as number | null,
       error: error instanceof Error ? error.message : String(error),
     };
   }
 }
 
-function layoutMetrics(font, samples, reader, unitsPerEm, corpusId) {
+type ShapedSample = ReturnType<typeof shapeSample>;
+
+function layoutMetrics(
+  font: Font,
+  samples: readonly LayoutSample[],
+  reader: GlyphReader,
+  unitsPerEm: number,
+  corpusId: string,
+) {
   const shapedSamples = samples.map((sample) => shapeSample(font, sample, reader, unitsPerEm));
   return {
     corpusId,
@@ -557,14 +693,20 @@ function layoutMetrics(font, samples, reader, unitsPerEm, corpusId) {
   };
 }
 
-function meanAvailable(...values) {
-  const available = values.filter(Number.isFinite);
+function meanAvailable(...values: Array<number | null | undefined>): number | null {
+  const available = values.filter((value): value is number => Number.isFinite(value));
   return available.length === 0
     ? null
     : round(available.reduce((sum, value) => sum + value, 0) / available.length);
 }
 
-function buildHwpkitProfile(coverage, advance, line, ink, layout) {
+function buildHwpkitProfile(
+  coverage: Coverage,
+  advance: ReturnType<typeof extractAdvanceMetrics>,
+  line: LineMetrics,
+  ink: ReturnType<typeof extractInkMetrics>,
+  layout: ReturnType<typeof layoutMetrics>,
+) {
   const groups = advance.groups;
   const completeBodySamples = layout.samples.filter(
     (sample) =>
@@ -574,7 +716,7 @@ function buildHwpkitProfile(coverage, advance, line, ink, layout) {
       sample.codePointCount > 0,
   );
   const totalBodyAdvance = completeBodySamples.reduce(
-    (sum, sample) => sum + (sample.advanceNoKerningEm ?? sample.advanceEm),
+    (sum, sample) => sum + (sample.advanceNoKerningEm ?? sample.advanceEm ?? 0),
     0,
   );
   const totalBodyCharacters = completeBodySamples.reduce(
@@ -639,9 +781,18 @@ function buildHwpkitProfile(coverage, advance, line, ink, layout) {
   };
 }
 
-function variationAxes(font) {
+interface VariationAxis {
+  tag: string;
+  name: string | null;
+  min: number | null;
+  default: number | null;
+  max: number | null;
+}
+
+function variationAxes(font: Font): VariationAxis[] {
   const axes = font.variationAxes ?? {};
   return Object.entries(axes)
+    .filter((entry): entry is [string, NonNullable<(typeof axes)[string]>] => entry[1] != null)
     .map(([tag, axis]) => ({
       tag,
       name: axis.name ?? null,
@@ -652,7 +803,7 @@ function variationAxes(font) {
     .sort((left, right) => left.tag.localeCompare(right.tag));
 }
 
-function faceMetadata(font, source, advance) {
+function faceMetadata(font: RawFont, source: FontSource, advance: ReturnType<typeof extractAdvanceMetrics>) {
   const os2 = table(font, "OS/2");
   const head = table(font, "head");
   const post = table(font, "post");
@@ -689,11 +840,11 @@ function faceMetadata(font, source, advance) {
   };
 }
 
-function sourceMetadata(source) {
-  const file = source.file ?? {};
-  const face = source.face ?? {};
+function sourceMetadata(source: FontSource) {
+  const file = source.file ?? ({} as FontSource["file"]);
+  const face = source.face ?? ({} as FontSource["face"]);
   return {
-    fileName: file.fileName ?? path.basename(source.path ?? file.path ?? "font"),
+    fileName: file.fileName ?? path.basename(file.path ?? "font"),
     sizeBytes: valueOrNull(file.sizeBytes),
     sha256: file.sha256,
     container: file.container ?? "unknown",
@@ -702,10 +853,15 @@ function sourceMetadata(source) {
   };
 }
 
-export function analyzeFontSource(source, options = {}) {
+export interface AnalyzeOptions {
+  corpusSamples?: LayoutSample[];
+}
+
+export function analyzeFontSource(source: FontSource, options: AnalyzeOptions = {}) {
   const { font } = source;
   if (!font) throw new Error("Font source does not contain a parsed font object");
-  const warnings = [];
+  const rawFont = font as RawFont;
+  const warnings: string[] = [];
   const unitsPerEm = Number(font.unitsPerEm);
   if (!Number.isFinite(unitsPerEm) || unitsPerEm <= 0) {
     throw new Error(`Invalid unitsPerEm: ${font.unitsPerEm}`);
@@ -713,16 +869,16 @@ export function analyzeFontSource(source, options = {}) {
 
   const sourceInfo = sourceMetadata(source);
   const customSamples = options.corpusSamples ?? [];
-  const samples = [...DEFAULT_LAYOUT_SAMPLES, ...customSamples];
+  const samples: LayoutSample[] = [...DEFAULT_LAYOUT_SAMPLES, ...customSamples];
   const corpusId = customSamples.length > 0 ? `${CORPUS_ID}+custom` : CORPUS_ID;
-  const reader = createGlyphReader(font, unitsPerEm);
+  const reader = createGlyphReader(rawFont, unitsPerEm);
   const coverage = extractCoverage(reader);
   const advance = extractAdvanceMetrics(reader);
-  const line = extractLineMetrics(font, unitsPerEm, warnings);
+  const line = extractLineMetrics(rawFont, unitsPerEm, warnings);
   const ink = extractInkMetrics(reader, unitsPerEm);
   const glyphs = extractRepresentativeGlyphs(reader, unitsPerEm);
   const layout = layoutMetrics(font, samples, reader, unitsPerEm, corpusId);
-  const face = faceMetadata(font, source, advance);
+  const face = faceMetadata(rawFont, source, advance);
 
   if ((coverage.sets.modernHangulSyllables.ratio ?? 0) < 1) {
     warnings.push(
@@ -760,7 +916,7 @@ export function analyzeFontSource(source, options = {}) {
     coverage,
     metrics: {
       unitsPerEm,
-      raw: rawMetrics(font),
+      raw: rawMetrics(rawFont),
       line,
       advance,
       ink,
@@ -775,16 +931,25 @@ export function analyzeFontSource(source, options = {}) {
   };
 }
 
-export function analyzeFontSources(sources, options = {}) {
-  const fonts = [];
-  const errors = [];
+export type FontProfile = ReturnType<typeof analyzeFontSource>;
+
+export interface AnalyzeError {
+  stage: string;
+  fileName: string;
+  faceIndex: number | null;
+  message: string;
+}
+
+export function analyzeFontSources(sources: readonly FontSource[], options: AnalyzeOptions = {}) {
+  const fonts: FontProfile[] = [];
+  const errors: AnalyzeError[] = [];
   for (const source of sources) {
     try {
       fonts.push(analyzeFontSource(source, options));
     } catch (error) {
       errors.push({
         stage: "analyze",
-        fileName: path.basename(source.path ?? source.file?.path ?? "font"),
+        fileName: path.basename(source.file?.path ?? "font"),
         faceIndex: source.face?.index ?? null,
         message: error instanceof Error ? error.message : String(error),
       });
@@ -799,7 +964,7 @@ export function analyzeFontSources(sources, options = {}) {
   return { fonts, errors };
 }
 
-export function createCatalog(fonts, errors = []) {
+export function createCatalog(fonts: FontProfile[], errors: unknown[] = []) {
   return {
     schemaVersion: SCHEMA_VERSION,
     schemaId: CATALOG_SCHEMA_ID,

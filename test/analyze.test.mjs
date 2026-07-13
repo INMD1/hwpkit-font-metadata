@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { analyzeFontSource, createCatalog } from "../src/analyze.mjs";
-import { COVERAGE_SETS } from "../src/constants.mjs";
+import { analyzeFontSource, createCatalog } from "../dist/src/analyze.js";
+import { COVERAGE_SETS } from "../dist/src/constants.js";
 
 function fakeAdvance(codePoint) {
   if (codePoint >= 0xac00 && codePoint <= 0xd7a3) return 920;

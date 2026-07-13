@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import test from "node:test";
 
-import { analyzeFontSource } from "../src/analyze.mjs";
-import { compareFontProfiles } from "../src/compare.mjs";
-import { loadFontSources } from "../src/font-source.mjs";
+import { analyzeFontSource } from "../dist/src/analyze.js";
+import { compareFontProfiles } from "../dist/src/compare.js";
+import { loadFontSources } from "../dist/src/font-source.js";
 
 const sansPath = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
 const serifPath = "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc";

@@ -5,7 +5,7 @@ import {
   HELP,
   parseAnalyze,
   parseCompare,
-} from "../bin/hwpkit-font-meta.mjs";
+} from "../dist/bin/hwpkit-font-meta.js";
 
 test("CLI help documents both analyzer and comparison commands", () => {
   assert.match(HELP, /analyze <font-or-directory/);

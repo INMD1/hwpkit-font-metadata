@@ -13,10 +13,12 @@ import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
-import { analyzeFontSources, createCatalog } from "../src/analyze.mjs";
-import { rankFontCandidates } from "../src/compare.mjs";
-import { PACKAGE_VERSION } from "../src/constants.mjs";
-import { discoverFontFiles, loadFontSources } from "../src/font-source.mjs";
+import { analyzeFontSources, createCatalog } from "../src/analyze.js";
+import { rankFontCandidates } from "../src/compare.js";
+import { PACKAGE_VERSION } from "../src/constants.js";
+import { discoverFontFiles, loadFontSources } from "../src/font-source.js";
+import type { FontErrorRecord } from "../src/font-source.js";
+import type { LayoutSample } from "../src/constants.js";
 
 const DEFAULT_MAX_FILES = 256;
 const DEFAULT_MAX_FILE_SIZE_MIB = 512;
@@ -58,7 +60,29 @@ Other:
   -v, --version             Show the package version
 `;
 
-function optionValue(args, index, name) {
+interface BaseOptions {
+  output: string | null;
+  corpora: string[];
+  pretty: boolean;
+  strict: boolean;
+  maxFiles: number;
+  maxFileSizeMiB: number;
+}
+
+export interface AnalyzeCliOptions extends BaseOptions {
+  inputs: string[];
+  face: string | null;
+}
+
+export interface CompareCliOptions extends BaseOptions {
+  source: string | null;
+  sourceFace: string | null;
+  candidates: string[];
+  candidateFace: string | null;
+  top: number | null;
+}
+
+function optionValue(args: string[], index: number, name: string): string {
   const value = args[index + 1];
   if (value === undefined || value.startsWith("--")) {
     throw new Error(`${name} requires a value`);
@@ -66,7 +90,7 @@ function optionValue(args, index, name) {
   return value;
 }
 
-function positiveInteger(value, name) {
+function positiveInteger(value: string, name: string): number {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer`);
@@ -74,7 +98,7 @@ function positiveInteger(value, name) {
   return parsed;
 }
 
-function parseCommonOption(args, index, options) {
+function parseCommonOption(args: string[], index: number, options: BaseOptions): number | null {
   const arg = args[index];
   if (arg === "-o" || arg === "--output") {
     options.output = optionValue(args, index, arg);
@@ -103,7 +127,7 @@ function parseCommonOption(args, index, options) {
   return null;
 }
 
-function baseOptions() {
+function baseOptions(): BaseOptions {
   return {
     output: null,
     corpora: [],
@@ -114,8 +138,8 @@ function baseOptions() {
   };
 }
 
-export function parseAnalyze(args) {
-  const options = { ...baseOptions(), inputs: [], face: null };
+export function parseAnalyze(args: string[]): AnalyzeCliOptions {
+  const options: AnalyzeCliOptions = { ...baseOptions(), inputs: [], face: null };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     const consumed = parseCommonOption(args, index, options);
@@ -141,8 +165,8 @@ export function parseAnalyze(args) {
   return options;
 }
 
-export function parseCompare(args) {
-  const options = {
+export function parseCompare(args: string[]): CompareCliOptions {
+  const options: CompareCliOptions = {
     ...baseOptions(),
     source: null,
     sourceFace: null,
@@ -196,28 +220,52 @@ export function parseCompare(args) {
   return options;
 }
 
-function portableError(error) {
+interface PortableErrorInput {
+  path?: string;
+  fileName?: string;
+  message?: string;
+  stage?: string;
+  code?: string | null;
+  faceIndex?: number | null;
+  face?: string;
+}
+
+interface PortableError {
+  stage: string;
+  fileName: string;
+  code: string | null;
+  message: string;
+  faceIndex?: number;
+  face?: string;
+}
+
+function portableError(error: PortableErrorInput): PortableError {
   const inputPath = error?.path ?? error?.fileName ?? "font";
   const fileName = path.basename(String(inputPath));
   const rawMessage = error?.message ?? String(error);
   const message = typeof rawMessage === "string" && String(inputPath)
     ? rawMessage.split(String(inputPath)).join(fileName)
     : String(rawMessage);
-  const result = {
+  const result: PortableError = {
     stage: error?.stage ?? "unknown",
     fileName,
     code: error?.code ?? null,
     message,
   };
-  if (Number.isInteger(error?.faceIndex)) result.faceIndex = error.faceIndex;
+  if (Number.isInteger(error?.faceIndex)) result.faceIndex = error.faceIndex as number;
   if (error?.face != null) result.face = String(error.face);
   return result;
 }
 
-async function discoverWithLimits(inputs, options) {
+interface DiscoverWithLimitsResult {
+  files: string[];
+  errors: PortableError[];
+}
+
+async function discoverWithLimits(inputs: string[], options: BaseOptions): Promise<DiscoverWithLimitsResult> {
   const discovery = await discoverFontFiles(inputs);
-  const errors = discovery.errors.map(portableError);
-  const accepted = [];
+  const errors: PortableError[] = discovery.errors.map(portableError);
+  const accepted: string[] = [];
   const maximumBytes = options.maxFileSizeMiB * 1024 * 1024;
 
   for (const filePath of discovery.files) {
@@ -247,7 +295,7 @@ async function discoverWithLimits(inputs, options) {
         portableError({
           stage: "stat",
           path: filePath,
-          code: error?.code ?? null,
+          code: (error as NodeJS.ErrnoException)?.code ?? null,
           message: error instanceof Error ? error.message : String(error),
         }),
       );
@@ -256,7 +304,17 @@ async function discoverWithLimits(inputs, options) {
   return { files: accepted, errors };
 }
 
-async function loadWithLimits(inputs, options, face) {
+interface LoadWithLimitsResult {
+  files: string[];
+  sources: Awaited<ReturnType<typeof loadFontSources>>["sources"];
+  errors: PortableError[];
+}
+
+async function loadWithLimits(
+  inputs: string[],
+  options: BaseOptions,
+  face: string | null,
+): Promise<LoadWithLimitsResult> {
   const limited = await discoverWithLimits(inputs, options);
   const loaded = await loadFontSources(limited.files, { face });
   return {
@@ -266,12 +324,16 @@ async function loadWithLimits(inputs, options, face) {
   };
 }
 
-function codePointSlice(text, maximum) {
+function codePointSlice(text: string, maximum: number): string {
   return Array.from(text).slice(0, maximum).join("");
 }
 
-async function loadCorpusSamples(corpusPaths) {
-  const samples = [];
+interface CorpusSample extends LayoutSample {
+  sourceSha256: string;
+}
+
+async function loadCorpusSamples(corpusPaths: string[]): Promise<CorpusSample[]> {
+  const samples: CorpusSample[] = [];
   const uniquePaths = [...new Set(corpusPaths.map((item) => path.resolve(item)))].sort();
   let remainingCodePoints = MAX_CORPUS_CODE_POINTS;
 
@@ -307,7 +369,12 @@ async function loadCorpusSamples(corpusPaths) {
   return samples;
 }
 
-async function writeJson(value, outputPath, pretty, protectedInputs = []) {
+async function writeJson(
+  value: unknown,
+  outputPath: string | null,
+  pretty: boolean,
+  protectedInputs: string[] = [],
+): Promise<void> {
   const payload = `${JSON.stringify(value, null, pretty ? 2 : 0)}\n`;
   if (!outputPath || outputPath === "-") {
     process.stdout.write(payload);
@@ -329,12 +396,12 @@ async function writeJson(value, outputPath, pretty, protectedInputs = []) {
   }
 }
 
-function reportSummary(kind, output, errorCount) {
+function reportSummary(kind: string, output: string | null, errorCount: number): void {
   if (!output || output === "-") return;
   process.stderr.write(`${kind}: wrote ${output} (${errorCount} input error(s))\n`);
 }
 
-async function runAnalyze(options) {
+async function runAnalyze(options: AnalyzeCliOptions): Promise<void> {
   const corpusSamples = await loadCorpusSamples(options.corpora);
   const loaded = await loadWithLimits(options.inputs, options, options.face);
   const analyzed = analyzeFontSources(loaded.sources, { corpusSamples });
@@ -349,9 +416,9 @@ async function runAnalyze(options) {
   if (options.strict && errors.length > 0) process.exitCode = 2;
 }
 
-async function runCompare(options) {
+async function runCompare(options: CompareCliOptions): Promise<void> {
   const corpusSamples = await loadCorpusSamples(options.corpora);
-  const sourceLoaded = await loadWithLimits([options.source], options, options.sourceFace);
+  const sourceLoaded = await loadWithLimits([options.source as string], options, options.sourceFace);
   if (sourceLoaded.sources.length !== 1) {
     throw new Error(
       `Source resolved to ${sourceLoaded.sources.length} faces; use --source-face to select one`,
@@ -389,7 +456,7 @@ async function runCompare(options) {
   if (options.strict && errors.length > 0) process.exitCode = 2;
 }
 
-export async function main(argv = process.argv.slice(2)) {
+export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   const args = [...argv];
   if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
     process.stdout.write(HELP);

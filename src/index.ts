@@ -2,7 +2,8 @@ export {
   analyzeFontSource,
   analyzeFontSources,
   createCatalog,
-} from "./analyze.mjs";
+} from "./analyze.js";
+export type { AnalyzeOptions, AnalyzeError, FontProfile } from "./analyze.js";
 export {
   checkCoverageCompatibility,
   compareFontProfiles,
@@ -10,7 +11,14 @@ export {
   computeFormatAdjustments,
   rankCandidates,
   rankFontCandidates,
-} from "./compare.mjs";
+} from "./compare.js";
+export type {
+  ComparisonOptions,
+  CompareResult,
+  CoverageCheckResult,
+  FormatAdjustments,
+  RankResult,
+} from "./compare.js";
 export {
   detectFontContainer,
   discoverFontFiles,
@@ -18,7 +26,15 @@ export {
   loadFontFiles,
   loadFontSources,
   SUPPORTED_FONT_EXTENSIONS,
-} from "./font-source.mjs";
+} from "./font-source.js";
+export type {
+  DiscoverResult,
+  FaceDescriptor,
+  FontErrorRecord,
+  FontFileInfo,
+  FontSource,
+  LoadResult,
+} from "./font-source.js";
 export {
   CATALOG_SCHEMA_ID,
   COMPARISON_SCHEMA_ID,
@@ -27,4 +43,4 @@ export {
   PACKAGE_VERSION,
   PROFILE_SCHEMA_ID,
   SCHEMA_VERSION,
-} from "./constants.mjs";
+} from "./constants.js";

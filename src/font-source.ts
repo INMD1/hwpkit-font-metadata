@@ -1,29 +1,98 @@
-import { createHash } from 'node:crypto';
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
+import { createHash } from "node:crypto";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 
-import { create as createFont } from 'fontkit';
+import { create as createFont } from "fontkit";
+import type { Font, FontCollection } from "fontkit";
 
 export const SUPPORTED_FONT_EXTENSIONS = Object.freeze([
-  '.otc',
-  '.otf',
-  '.ttc',
-  '.ttf',
-  '.woff',
-  '.woff2',
+  ".otc",
+  ".otf",
+  ".ttc",
+  ".ttf",
+  ".woff",
+  ".woff2",
 ]);
 
 const SUPPORTED_EXTENSION_SET = new Set(SUPPORTED_FONT_EXTENSIONS);
 
-function compareText(left, right) {
+export interface FontErrorRecord {
+  path: string;
+  stage: string;
+  code: string;
+  message: string;
+  faceIndex?: number;
+  face?: string;
+  availableFaces?: Array<{
+    index: number;
+    postscriptName: string | null;
+    fullName: string | null;
+    familyName: string | null;
+  }>;
+}
+
+export interface FaceDescriptor {
+  index: number;
+  count: number;
+  postscriptName: string | null;
+  fullName: string | null;
+  familyName: string | null;
+  subfamilyName: string | null;
+}
+
+export interface FontFileInfo {
+  fileName: string;
+  sizeBytes: number;
+  sha256: string;
+  container: string;
+  /** Absolute path. Non-enumerable so it never leaks into JSON output. */
+  readonly path?: string;
+}
+
+export interface FontSource {
+  file: FontFileInfo;
+  face: FaceDescriptor;
+  /** Live fontkit object. Non-enumerable so JSON.stringify/spread stay safe. */
+  readonly font: Font;
+}
+
+export interface DiscoverResult {
+  files: string[];
+  errors: FontErrorRecord[];
+}
+
+export interface LoadResult {
+  files: string[];
+  sources: FontSource[];
+  errors: FontErrorRecord[];
+}
+
+export interface DiscoverOptions {
+  cwd?: string;
+}
+
+export interface LoadOptions {
+  face?: string | number | null;
+  cwd?: string;
+}
+
+export type FontInputs = string | Iterable<string> | null | undefined;
+
+function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function errorRecord(stage, filePath, error, fallbackCode, details = {}) {
+function errorRecord(
+  stage: string,
+  filePath: string,
+  error: unknown,
+  fallbackCode: string,
+  details: Record<string, unknown> = {},
+): FontErrorRecord {
   const message = error instanceof Error ? error.message : String(error);
   const code =
-    error && typeof error === 'object' && typeof error.code === 'string'
-      ? error.code
+    error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
       : fallbackCode;
 
   return {
@@ -32,30 +101,32 @@ function errorRecord(stage, filePath, error, fallbackCode, details = {}) {
     code,
     message,
     ...details,
-  };
+  } as FontErrorRecord;
 }
 
-function sortErrors(errors) {
+function sortErrors(errors: FontErrorRecord[]): FontErrorRecord[] {
   return errors.sort((left, right) => {
     return (
-      compareText(left.path ?? '', right.path ?? '') ||
-      compareText(left.stage ?? '', right.stage ?? '') ||
-      compareText(left.code ?? '', right.code ?? '') ||
-      compareText(left.message ?? '', right.message ?? '')
+      compareText(left.path ?? "", right.path ?? "") ||
+      compareText(left.stage ?? "", right.stage ?? "") ||
+      compareText(left.code ?? "", right.code ?? "") ||
+      compareText(left.message ?? "", right.message ?? "")
     );
   });
 }
 
-function inputList(inputs) {
+function inputList(inputs: FontInputs): string[] {
   if (inputs == null) return [];
-  if (typeof inputs === 'string') return [inputs];
+  if (typeof inputs === "string") return [inputs];
   if (Array.isArray(inputs)) return inputs;
-  if (typeof inputs[Symbol.iterator] === 'function') return [...inputs];
-  return [inputs];
+  if (typeof (inputs as Iterable<string>)[Symbol.iterator] === "function") {
+    return [...(inputs as Iterable<string>)];
+  }
+  return [inputs as unknown as string];
 }
 
-export function isSupportedFontFile(filePath) {
-  if (typeof filePath !== 'string') return false;
+export function isSupportedFontFile(filePath: unknown): boolean {
+  if (typeof filePath !== "string") return false;
   return SUPPORTED_EXTENSION_SET.has(path.extname(filePath).toLowerCase());
 }
 
@@ -66,18 +137,21 @@ export function isSupportedFontFile(filePath) {
  * de-duplicated. A problem with one input or directory entry is returned in
  * `errors` without preventing other files from being discovered.
  */
-export async function discoverFontFiles(inputs, { cwd = process.cwd() } = {}) {
-  const errors = [];
-  const roots = new Set();
+export async function discoverFontFiles(
+  inputs: FontInputs,
+  { cwd = process.cwd() }: DiscoverOptions = {},
+): Promise<DiscoverResult> {
+  const errors: FontErrorRecord[] = [];
+  const roots = new Set<string>();
 
   for (const input of inputList(inputs)) {
-    if (typeof input !== 'string' || input.trim() === '') {
+    if (typeof input !== "string" || input.trim() === "") {
       errors.push(
         errorRecord(
-          'discover',
-          typeof input === 'string' ? input : String(input),
-          new TypeError('Font input must be a non-empty path string'),
-          'INVALID_FONT_INPUT',
+          "discover",
+          typeof input === "string" ? input : String(input),
+          new TypeError("Font input must be a non-empty path string"),
+          "INVALID_FONT_INPUT",
         ),
       );
       continue;
@@ -86,15 +160,15 @@ export async function discoverFontFiles(inputs, { cwd = process.cwd() } = {}) {
     roots.add(path.resolve(cwd, input));
   }
 
-  const discovered = new Map();
-  const visitedDirectories = new Set();
+  const discovered = new Map<string, string>();
+  const visitedDirectories = new Set<string>();
 
-  async function walk(candidatePath, explicitInput) {
+  async function walk(candidatePath: string, explicitInput: boolean): Promise<void> {
     let stats;
     try {
       stats = await fs.stat(candidatePath);
     } catch (error) {
-      errors.push(errorRecord('stat', candidatePath, error, 'FONT_INPUT_STAT_ERROR'));
+      errors.push(errorRecord("stat", candidatePath, error, "FONT_INPUT_STAT_ERROR"));
       return;
     }
 
@@ -103,7 +177,7 @@ export async function discoverFontFiles(inputs, { cwd = process.cwd() } = {}) {
       try {
         realDirectory = await fs.realpath(candidatePath);
       } catch (error) {
-        errors.push(errorRecord('realpath', candidatePath, error, 'FONT_INPUT_REALPATH_ERROR'));
+        errors.push(errorRecord("realpath", candidatePath, error, "FONT_INPUT_REALPATH_ERROR"));
         return;
       }
 
@@ -114,7 +188,7 @@ export async function discoverFontFiles(inputs, { cwd = process.cwd() } = {}) {
       try {
         entries = await fs.readdir(realDirectory, { withFileTypes: true });
       } catch (error) {
-        errors.push(errorRecord('readdir', candidatePath, error, 'FONT_DIRECTORY_READ_ERROR'));
+        errors.push(errorRecord("readdir", candidatePath, error, "FONT_DIRECTORY_READ_ERROR"));
         return;
       }
 
@@ -129,10 +203,10 @@ export async function discoverFontFiles(inputs, { cwd = process.cwd() } = {}) {
       if (explicitInput) {
         errors.push(
           errorRecord(
-            'discover',
+            "discover",
             candidatePath,
-            new Error('Font input is neither a regular file nor a directory'),
-            'UNSUPPORTED_FONT_INPUT_TYPE',
+            new Error("Font input is neither a regular file nor a directory"),
+            "UNSUPPORTED_FONT_INPUT_TYPE",
           ),
         );
       }
@@ -143,7 +217,7 @@ export async function discoverFontFiles(inputs, { cwd = process.cwd() } = {}) {
     try {
       realFile = await fs.realpath(candidatePath);
     } catch (error) {
-      errors.push(errorRecord('realpath', candidatePath, error, 'FONT_INPUT_REALPATH_ERROR'));
+      errors.push(errorRecord("realpath", candidatePath, error, "FONT_INPUT_REALPATH_ERROR"));
       return;
     }
 
@@ -151,12 +225,12 @@ export async function discoverFontFiles(inputs, { cwd = process.cwd() } = {}) {
       if (explicitInput) {
         errors.push(
           errorRecord(
-            'discover',
+            "discover",
             candidatePath,
             new Error(
-              `Unsupported font extension; expected one of ${SUPPORTED_FONT_EXTENSIONS.join(', ')}`,
+              `Unsupported font extension; expected one of ${SUPPORTED_FONT_EXTENSIONS.join(", ")}`,
             ),
-            'UNSUPPORTED_FONT_EXTENSION',
+            "UNSUPPORTED_FONT_EXTENSION",
           ),
         );
       }
@@ -176,33 +250,33 @@ export async function discoverFontFiles(inputs, { cwd = process.cwd() } = {}) {
   };
 }
 
-function magicString(buffer) {
-  return buffer.subarray(0, 4).toString('latin1');
+function magicString(buffer: Buffer): string {
+  return buffer.subarray(0, 4).toString("latin1");
 }
 
-export function detectFontContainer(buffer, filePath = '') {
+export function detectFontContainer(buffer: Buffer, filePath = ""): string {
   const magic = magicString(buffer);
   const extension = path.extname(filePath).toLowerCase();
 
-  if (magic === 'ttcf') return extension === '.otc' ? 'otc' : 'ttc';
-  if (magic === 'wOFF') return 'woff';
-  if (magic === 'wOF2') return 'woff2';
-  if (magic === 'OTTO') return 'otf';
-  if (magic === '\u0000\u0001\u0000\u0000' || magic === 'true') return 'ttf';
+  if (magic === "ttcf") return extension === ".otc" ? "otc" : "ttc";
+  if (magic === "wOFF") return "woff";
+  if (magic === "wOF2") return "woff2";
+  if (magic === "OTTO") return "otf";
+  if (magic === "\u0000\u0001\u0000\u0000" || magic === "true") return "ttf";
   if (SUPPORTED_EXTENSION_SET.has(extension)) return extension.slice(1);
-  return 'unknown';
+  return "unknown";
 }
 
-function readableName(value) {
+function readableName(value: unknown): string | null {
   if (value == null) return null;
-  if (typeof value === 'string') return value;
+  if (typeof value === "string") return value;
   if (ArrayBuffer.isView(value)) {
     return Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString();
   }
   return String(value);
 }
 
-function describeFace(font, index, count) {
+function describeFace(font: Font, index: number, count: number): FaceDescriptor {
   return {
     index,
     count,
@@ -213,24 +287,35 @@ function describeFace(font, index, count) {
   };
 }
 
-function normalizedFaceSelector(face) {
+function normalizedFaceSelector(face: unknown): string | null {
   if (face == null) return null;
   const selector = String(face).trim();
-  return selector === '' ? null : selector;
+  return selector === "" ? null : selector;
 }
 
-function matchesFace(face, selector) {
+function matchesFace(face: FaceDescriptor, selector: string | null): boolean {
   if (selector == null) return true;
   if (/^\d+$/.test(selector)) return face.index === Number(selector);
 
   const expected = selector.toLowerCase();
   return [face.postscriptName, face.fullName, face.familyName]
-    .filter((name) => name != null)
+    .filter((name): name is string => name != null)
     .some((name) => name.toLowerCase() === expected);
 }
 
-function makeSource(font, filePath, fileDetails, faceDetails) {
-  const file = {
+interface FileDetails {
+  sizeBytes: number;
+  sha256: string;
+  container: string;
+}
+
+function makeSource(
+  font: Font,
+  filePath: string,
+  fileDetails: FileDetails,
+  faceDetails: FaceDescriptor,
+): FontSource {
+  const file: FontFileInfo = {
     fileName: path.basename(filePath),
     sizeBytes: fileDetails.sizeBytes,
     sha256: fileDetails.sha256,
@@ -239,17 +324,17 @@ function makeSource(font, filePath, fileDetails, faceDetails) {
 
   // The absolute path is useful while loading and reporting CLI errors, but it
   // is machine-specific and should not leak into portable metadata JSON.
-  Object.defineProperty(file, 'path', {
+  Object.defineProperty(file, "path", {
     value: filePath,
     enumerable: false,
     writable: false,
   });
 
-  const source = { file, face: faceDetails };
+  const source = { file, face: faceDetails } as FontSource;
 
   // Analysis needs the live fontkit object. Keeping it non-enumerable makes
   // JSON.stringify and object spread safe without a custom serializer.
-  Object.defineProperty(source, 'font', {
+  Object.defineProperty(source, "font", {
     value: font,
     enumerable: false,
     writable: false,
@@ -258,47 +343,52 @@ function makeSource(font, filePath, fileDetails, faceDetails) {
   return source;
 }
 
-async function loadOneFontFile(filePath, faceSelector) {
-  const errors = [];
-  let buffer;
+interface LoadedFile {
+  sources: FontSource[];
+  errors: FontErrorRecord[];
+}
+
+async function loadOneFontFile(filePath: string, faceSelector: string | null): Promise<LoadedFile> {
+  const errors: FontErrorRecord[] = [];
+  let buffer: Buffer;
 
   try {
     buffer = await fs.readFile(filePath);
   } catch (error) {
     return {
       sources: [],
-      errors: [errorRecord('read', filePath, error, 'FONT_FILE_READ_ERROR')],
+      errors: [errorRecord("read", filePath, error, "FONT_FILE_READ_ERROR")],
     };
   }
 
-  const fileDetails = {
+  const fileDetails: FileDetails = {
     sizeBytes: buffer.byteLength,
-    sha256: createHash('sha256').update(buffer).digest('hex'),
+    sha256: createHash("sha256").update(buffer).digest("hex"),
     container: detectFontContainer(buffer, filePath),
   };
 
-  let opened;
+  let opened: Font | FontCollection;
   try {
     opened = createFont(buffer);
   } catch (error) {
     return {
       sources: [],
-      errors: [errorRecord('parse', filePath, error, 'FONT_PARSE_ERROR')],
+      errors: [errorRecord("parse", filePath, error, "FONT_PARSE_ERROR")],
     };
   }
 
-  let fonts;
+  let fonts: Font[];
   try {
-    const collectionFonts = opened.fonts;
-    fonts = Array.isArray(collectionFonts) ? collectionFonts : [opened];
+    const collectionFonts = (opened as FontCollection).fonts;
+    fonts = Array.isArray(collectionFonts) ? collectionFonts : [opened as Font];
   } catch (error) {
     return {
       sources: [],
-      errors: [errorRecord('faces', filePath, error, 'FONT_COLLECTION_ERROR')],
+      errors: [errorRecord("faces", filePath, error, "FONT_COLLECTION_ERROR")],
     };
   }
 
-  const describedFaces = [];
+  const describedFaces: Array<{ font: Font; face: FaceDescriptor }> = [];
   for (let index = 0; index < fonts.length; index += 1) {
     try {
       describedFaces.push({
@@ -307,7 +397,7 @@ async function loadOneFontFile(filePath, faceSelector) {
       });
     } catch (error) {
       errors.push(
-        errorRecord('face', filePath, error, 'FONT_FACE_ERROR', {
+        errorRecord("face", filePath, error, "FONT_FACE_ERROR", {
           faceIndex: index,
         }),
       );
@@ -318,10 +408,10 @@ async function loadOneFontFile(filePath, faceSelector) {
   if (faceSelector != null && selected.length === 0) {
     errors.push(
       errorRecord(
-        'select-face',
+        "select-face",
         filePath,
         new Error(`No font face matched "${faceSelector}"`),
-        'FONT_FACE_NOT_FOUND',
+        "FONT_FACE_NOT_FOUND",
         {
           face: faceSelector,
           availableFaces: describedFaces.map(({ face }) => ({
@@ -348,11 +438,11 @@ async function loadOneFontFile(filePath, faceSelector) {
  * otherwise it must exactly match a PostScript, full, or family name without
  * regard to case. When omitted, every face in TTC/OTC collections is returned.
  */
-export async function loadFontSources(inputs, options = {}) {
+export async function loadFontSources(inputs: FontInputs, options: LoadOptions = {}): Promise<LoadResult> {
   const { face = null, cwd = process.cwd() } = options;
   const discovery = await discoverFontFiles(inputs, { cwd });
-  const sources = [];
-  const errors = [...discovery.errors];
+  const sources: FontSource[] = [];
+  const errors: FontErrorRecord[] = [...discovery.errors];
   const selector = normalizedFaceSelector(face);
 
   // Deliberately process one file at a time. Besides keeping memory bounded for

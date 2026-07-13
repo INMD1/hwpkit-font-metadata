@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { describe, quantile, round, safeRatio } from "../src/stats.mjs";
+import { describe, quantile, round, safeRatio } from "../dist/src/stats.js";
 
 test("quantile interpolates values deterministically", () => {
   assert.equal(quantile([1, 2, 3, 4], 0.5), 2.5);
