@@ -1,4 +1,6 @@
-# Hwpkit Font Metadata
+> # 경고
+> fixture 폰트는 재배포 가능한 라이선스의 작은 파일만 저장소에 포함하고
+> 상용 폰트 경로에 의존하는 테스트는 만들지 마십시오.
 
 한글 폰트의 실제 advance width, 공백 폭, 세로 메트릭과 문자 coverage를 읽어 Hwpkit의 줄바꿈·문단 높이 계산에 사용할 JSON 메타데이터를 만드는 로컬 도구입니다. 원본 폰트를 다른 폰트로 바꿔야 할 때는 후보별 차이와 HWP/HWPX 보정 힌트도 계산합니다.
 
@@ -305,4 +307,3 @@ npm test
 node --check ./examples/hwpkit-consumer.mjs
 ```
 
-fixture 폰트는 재배포 가능한 라이선스의 작은 파일만 저장소에 포함하고, 상용 폰트 경로에 의존하는 테스트는 만들지 마십시오.
