@@ -10,7 +10,21 @@ import {
   mergeFontCatalogs,
   parseAnalyze,
   parseCompare,
+  parseMerge,
 } from "../dist/bin/hwpkit-font-meta.js";
+import { CATALOG_SCHEMA_ID } from "../dist/src/constants.js";
+
+function fakeFontProfile({ profileId, fullName, sha256, faceIndex = 0 }) {
+  return {
+    profileId,
+    face: { fullName },
+    source: { sha256, faceIndex },
+  };
+}
+
+function fakeCatalog(fonts, errors = []) {
+  return { schemaId: CATALOG_SCHEMA_ID, generator: {}, fonts, errors };
+}
 
 test("CLI help documents both analyzer and comparison commands", () => {
   assert.match(HELP, /analyze <font-or-directory/);

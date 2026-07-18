@@ -14,9 +14,10 @@ import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
-import { analyzeFontSources, createCatalog } from "../src/analyze.js";
+import { analyzeFontSources, createCatalog, sortFontProfiles } from "../src/analyze.js";
+import type { FontProfile } from "../src/analyze.js";
 import { rankFontCandidates } from "../src/compare.js";
-import { PACKAGE_VERSION } from "../src/constants.js";
+import { CATALOG_SCHEMA_ID, PACKAGE_VERSION } from "../src/constants.js";
 import { discoverFontFiles, loadFontSources } from "../src/font-source.js";
 import type { FontErrorRecord } from "../src/font-source.js";
 import type { LayoutSample } from "../src/constants.js";
@@ -384,6 +385,19 @@ async function loadCorpusSamples(corpusPaths: string[]): Promise<CorpusSample[]>
   return samples;
 }
 
+function timestampSlug(date: Date): string {
+  const pad = (value: number, length = 2) => String(value).padStart(length, "0");
+  return (
+    `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-` +
+    `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}${pad(date.getMilliseconds(), 3)}`
+  );
+}
+
+/** Resolves where JSON goes when -o/--output was not given: ./result/<prefix>-<timestamp>.json. */
+function defaultOutputPath(prefix: string): string {
+  return path.join(RESULT_DIR, `${prefix}-${timestampSlug(new Date())}.json`);
+}
+
 async function writeJson(
   value: unknown,
   outputPath: string | null,
@@ -471,6 +485,164 @@ async function runCompare(options: CompareCliOptions): Promise<void> {
   );
   reportSummary("compare", outputPath, errors.length);
   if (options.strict && errors.length > 0) process.exitCode = 2;
+}
+
+interface MergeCliOptions {
+  inputs: string[];
+  output: string | null;
+  pretty: boolean;
+}
+
+export function parseMerge(args: string[]): MergeCliOptions {
+  const options: MergeCliOptions = { inputs: [], output: null, pretty: true };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "-o" || arg === "--output") {
+      options.output = optionValue(args, index, arg);
+      index += 1;
+    } else if (arg === "--compact") {
+      options.pretty = false;
+    } else if (arg === "--") {
+      options.inputs.push(...args.slice(index + 1));
+      break;
+    } else if (arg.startsWith("-")) {
+      throw new Error(`Unknown merge option: ${arg}`);
+    } else {
+      options.inputs.push(arg);
+    }
+  }
+  if (options.inputs.length === 0) options.inputs.push(RESULT_DIR);
+  return options;
+}
+
+async function walkJsonFiles(root: string): Promise<string[]> {
+  const details = await stat(root);
+  if (!details.isDirectory()) return [root];
+
+  const results: string[] = [];
+  const entries = await readdir(root, { withFileTypes: true });
+  entries.sort((left, right) => left.name.localeCompare(right.name));
+  for (const entry of entries) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) results.push(...(await walkJsonFiles(entryPath)));
+    else if (entry.isFile() && entry.name.toLowerCase().endsWith(".json")) results.push(entryPath);
+  }
+  return results;
+}
+
+async function collectMergeInputFiles(inputs: string[]): Promise<string[]> {
+  const collected: string[] = [];
+  for (const input of inputs) {
+    const resolved = path.resolve(input);
+    let details;
+    try {
+      details = await stat(resolved);
+    } catch (error) {
+      throw new Error(
+        `Merge input not found: ${input} (${error instanceof Error ? error.message : error})`,
+      );
+    }
+    if (details.isDirectory()) collected.push(...(await walkJsonFiles(resolved)));
+    else collected.push(resolved);
+  }
+  return [...new Set(collected)].sort();
+}
+
+async function readJsonFile(filePath: string): Promise<unknown> {
+  const content = await readFile(filePath, "utf8");
+  try {
+    return JSON.parse(content);
+  } catch (error) {
+    throw new Error(`Invalid JSON in ${filePath}: ${error instanceof Error ? error.message : error}`);
+  }
+}
+
+interface MergeStats {
+  catalogFiles: number;
+  skippedFiles: string[];
+  duplicateFontCount: number;
+}
+
+interface MergeInput {
+  path: string;
+  document: unknown;
+}
+
+/**
+ * Pure merge step, kept separate from file I/O so it is easy to unit test:
+ * one hwpkit.font-catalog/v1 document per merged font, later files losing to
+ * the first file that already claimed a given profileId.
+ */
+export function mergeFontCatalogs(inputs: readonly MergeInput[]): {
+  catalog: ReturnType<typeof createCatalog>;
+  stats: MergeStats;
+} {
+  const fontsByProfileId = new Map<string, FontProfile>();
+  const errorKeys = new Set<string>();
+  const errors: unknown[] = [];
+  const skippedFiles: string[] = [];
+  let duplicateFontCount = 0;
+  let catalogFiles = 0;
+
+  for (const { path: filePath, document } of inputs) {
+    const doc = document as { schemaId?: string; fonts?: FontProfile[]; errors?: unknown[] } | null;
+    if (!doc || doc.schemaId !== CATALOG_SCHEMA_ID || !Array.isArray(doc.fonts)) {
+      skippedFiles.push(filePath);
+      continue;
+    }
+    catalogFiles += 1;
+    for (const font of doc.fonts) {
+      if (fontsByProfileId.has(font.profileId)) duplicateFontCount += 1;
+      else fontsByProfileId.set(font.profileId, font);
+    }
+    for (const error of doc.errors ?? []) {
+      const key = JSON.stringify(error);
+      if (!errorKeys.has(key)) {
+        errorKeys.add(key);
+        errors.push(error);
+      }
+    }
+  }
+
+  if (fontsByProfileId.size === 0) {
+    throw new Error(`No ${CATALOG_SCHEMA_ID} document found among ${inputs.length} file(s)`);
+  }
+
+  const fonts = sortFontProfiles([...fontsByProfileId.values()]);
+  return {
+    catalog: createCatalog(fonts, errors),
+    stats: { catalogFiles, skippedFiles, duplicateFontCount },
+  };
+}
+
+async function runMerge(options: MergeCliOptions): Promise<void> {
+  const files = await collectMergeInputFiles(options.inputs);
+  if (files.length === 0) {
+    throw new Error(`No JSON file found under: ${options.inputs.join(", ")}`);
+  }
+
+  const inputs: MergeInput[] = [];
+  for (const file of files) {
+    inputs.push({ path: file, document: await readJsonFile(file) });
+  }
+  const { catalog, stats } = mergeFontCatalogs(inputs);
+
+  const outputPath = options.output ?? defaultOutputPath("merged");
+  await writeJson(catalog, outputPath, options.pretty);
+
+  if (outputPath === "-") return;
+  const parts = [
+    `merge: wrote ${outputPath} `,
+    `(${catalog.fonts.length} font(s) from ${stats.catalogFiles} catalog file(s)`,
+  ];
+  if (stats.duplicateFontCount > 0) {
+    parts.push(`, ${stats.duplicateFontCount} duplicate(s) skipped`);
+  }
+  if (stats.skippedFiles.length > 0) {
+    parts.push(`, ${stats.skippedFiles.length} non-catalog file(s) skipped`);
+  }
+  parts.push(")\n");
+  process.stderr.write(parts.join(""));
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
