@@ -2,7 +2,6 @@ export {
   analyzeFontSource,
   analyzeFontSources,
   createCatalog,
-  sortFontProfiles,
 } from "./analyze.js";
 export type { AnalyzeOptions, AnalyzeError, FontProfile } from "./analyze.js";
 export {
